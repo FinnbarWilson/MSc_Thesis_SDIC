@@ -1,0 +1,41 @@
+# Environment for the calorimeter clustering comparison.
+#
+#   conda env create -f environment.yml
+#   conda activate calo-clustering
+#
+# Versions are pinned because the clustering output depends on them; CLUEstering
+# in particular determines the labels the whole analysis is built on.
+
+name: calo-clustering
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+
+  # Data handling and numerics
+  - numpy=2.4.6
+  - pandas=3.0.3
+  - scipy=1.17.1
+  - pyarrow=24.0.0
+  - pyyaml
+
+  # Clustering, optimisation and jets
+  - optuna=4.9.0
+  - fastjet=3.5.1.3
+
+  # Figures
+  - matplotlib=3.10.9
+
+  # Testing
+  - pytest
+
+  # Build tools needed to compile the CLUEstering CPU backends
+  - boost
+  - cmake
+  - ninja
+  - cxx-compiler
+
+  - pip
+  - pip:
+      - CLUEstering==2.11.0
+      - colliderml==0.4.2
