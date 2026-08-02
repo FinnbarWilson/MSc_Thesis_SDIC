@@ -1,0 +1,158 @@
+# =============================================================================
+# Experiment definition.
+#
+# This file is the single source of truth for every decision that BOTH the CLUE
+# baseline and the MaskFormer model must share. Both pipelines read it, so a
+# change here applies to both or to neither. Anything the two methods do not
+# share belongs in their own section at the bottom, and is a property of the
+# method rather than of the experiment.
+# =============================================================================
+
+# --- Which dataset to run on ------------------------------------------------
+# ColliderML ships pileup-free and pileup-200 samples. pu0 isolates the
+# clustering problem; pu200 is the harder case. Switch `active` to move both
+# pipelines together; never point one pipeline at one sample and the other at
+# the other.
+dataset:
+  active: pu0            # pu0 | pu200
+  pu0:
+    calo_hits: /Users/finn/Documents/Code/Large_Datasets/ColliderML_R0/calo_hits/events0-999.parquet
+    particles: /Users/finn/Documents/Code/Large_Datasets/ColliderML_R0/particles/events0-999.parquet
+  pu200:
+    calo_hits: ""        # set when the pileup-200 sample is available
+    particles: ""
+
+# --- Detector collections ---------------------------------------------------
+# The OpenDataDetector calorimeter is read out as four collections. CLUE is
+# tuned and run independently within each; cluster ids are offset afterwards so
+# they are unique across the event.
+detectors:
+  - ECalBarrelCollection
+  - ECalEndcapCollection
+  - HCalBarrelCollection
+  - HCalEndcapCollection
+
+# --- Event splits -----------------------------------------------------------
+# Three disjoint windows over the event index, applied AFTER event selection so
+# the counts below are exact. `test` produces every number that appears in the
+# report; neither method sees it during tuning or training.
+#
+# CLUE tunes on the first `clue_tune_events` of the train window rather than the
+# whole of it: an Optuna trial re-runs the full pipeline over every event, and a
+# seven-parameter search does not need thousands of events to converge. The test
+# window is identical for both methods, which is what makes them comparable.
+splits:
+  train_start: 0
+  train_events: 3000
+  val_start: 3000
+  val_events: 500
+  test_start: 3500
+  test_events: 500
+  clue_tune_events: 50
+
+# --- Event selection --------------------------------------------------------
+# Roughly a third of events in the pu0 release carry a near-empty calorimeter
+# (< 3000 hits, ~1 GeV deposited) despite a complete generator record, while a
+# normal event has ~19k hits and ~20 GeV. They contain no reconstructable jets,
+# so they are dropped. Set `min_calo_hits: 0` to disable and quantify the effect.
+event_selection:
+  min_calo_hits: 3000
+
+# --- Hit selection ----------------------------------------------------------
+# Zero-suppression applied to the raw cells before either method sees the event.
+# ColliderML deposits are truth level, so this stands in for a readout threshold
+# rather than removing electronic noise. 2e-4 GeV keeps clusters essentially
+# intact (~22k hits/event against ~28k uncut); 0.0 disables it.
+hit_selection:
+  min_energy_gev: 2.0e-4
+
+# --- Reconstructable particles ----------------------------------------------
+# ONE definition of the target set, used simultaneously as the MaskFormer's
+# training targets and as the denominator of CLUE's efficiency. If these two
+# ever diverge the methods are no longer measuring the same quantity.
+#
+# `min_calo_hits` at 3 removes particles that deposit in one or two cells and
+# cannot be reconstructed in practice; measured to drop ~15% of targets while
+# retaining ~98% of the calorimeter energy.
+particle_selection:
+  min_pt_gev: 0.5
+  max_abs_eta: 4.0
+  min_calo_hits: 3
+  min_deposited_energy_gev: 0.05
+  include_charged: true
+  include_neutral: true
+
+# --- Metrics ----------------------------------------------------------------
+# Energy-weighted purity and efficiency, scored per truth particle rather than
+# per cluster. A cluster-centric efficiency only ever sees particles that win a
+# cluster, so a particle merged away vanishes from the denominator instead of
+# counting as a miss; scoring per particle removes that survivorship bias.
+#
+# The same definitions are used for tuning and for reporting. Tuning toward one
+# quantity and reporting another would make the reported number untuned-for.
+metrics:
+  working_points: [0.5, 0.75, 1.0]
+  overlap_handling: allow      # allow | argmax
+  contamination_thresholds: [0.0, 0.01, 0.05, 0.10]
+
+# --- Jets -------------------------------------------------------------------
+# anti-kT with E-scheme recombination via FastJet. Truth jets are built from
+# each primary particle's total deposited calorimeter energy, so truth and reco
+# jets share an energy scale and the per-detector sampling calibration cancels
+# in the response ratio.
+jets:
+  radius: 0.4
+  match_delta_r: 0.2
+  min_energy_gev: 0.5
+  primary_min_pt_gev: 1.0
+  primary_max_abs_eta: 2.5
+  constituent_min_energy_gev: 0.005
+
+# --- Reproducibility --------------------------------------------------------
+seed: 42
+
+# =============================================================================
+# Method-specific settings below this line.
+# =============================================================================
+
+# --- CLUE -------------------------------------------------------------------
+# `coords` selects the clustering space. "etaphi" uses CLUEstering's periodic
+# metric so a shower straddling phi = +/-pi is not split; "xy" is Cartesian.
+#
+# `objective` selects what Optuna maximises:
+#   cluster_f1 - energy-weighted purity/efficiency F1, the clustering task itself
+#   jet        - truth-jet vs reco-jet energy matching, the physics observable
+# Both are supported and both may be reported; state which one produced the
+# headline comparison.
+clue:
+  coords: etaphi           # etaphi | xy
+  objective: cluster_f1    # cluster_f1 | jet
+  backend: cpu serial      # cpu serial | cpu openmp | gpu cuda | gpu hip
+  optuna_trials: 80
+  search:
+    outlier_distance_factor: [1.0, 3.0]
+    rho_c_3d: [0.001, 0.05]
+    etaphi:
+      ECalBarrelCollection: {d_c_2d: [5.0e-5, 0.1], rho_c_2d: [0.005, 0.1], d_c_3d: [1.0e-3, 0.5], z_scale: [10.0, 50000.0]}
+      ECalEndcapCollection: {d_c_2d: [5.0e-5, 0.1], rho_c_2d: [0.005, 0.1], d_c_3d: [1.0e-3, 0.5], z_scale: [10.0, 50000.0]}
+      HCalBarrelCollection: {d_c_2d: [5.0e-4, 0.1], rho_c_2d: [0.005, 0.2], d_c_3d: [2.0e-3, 0.5], z_scale: [10.0, 50000.0]}
+      HCalEndcapCollection: {d_c_2d: [5.0e-4, 0.1], rho_c_2d: [0.005, 0.2], d_c_3d: [2.0e-3, 0.5], z_scale: [10.0, 50000.0]}
+    xy:
+      ECalBarrelCollection: {d_c_2d: [0.2, 20.0], rho_c_2d: [0.005, 0.1], d_c_3d: [1.0, 40.0], z_scale: [1.0, 20.0]}
+      ECalEndcapCollection: {d_c_2d: [1.0, 20.0], rho_c_2d: [0.005, 0.1], d_c_3d: [1.0, 40.0], z_scale: [1.0, 20.0]}
+      HCalBarrelCollection: {d_c_2d: [5.0, 80.0], rho_c_2d: [0.005, 0.2], d_c_3d: [5.0, 100.0], z_scale: [1.0, 20.0]}
+      HCalEndcapCollection: {d_c_2d: [5.0, 80.0], rho_c_2d: [0.005, 0.2], d_c_3d: [5.0, 100.0], z_scale: [1.0, 20.0]}
+
+# --- MaskFormer -------------------------------------------------------------
+# `max_particles` caps how many objects the model can return. Events holding
+# more targets than this cannot be fully reconstructed, so the surplus is scored
+# as missed rather than removed from the truth: truncating the truth to match
+# the model would hide a limitation of the model. The measured maximum in pu0 is
+# ~1200 targets per event.
+maskformer:
+  max_particles: 1200
+  embed_dim: 256
+  encoder_layers: 4
+  decoder_layers: 4
+  attention_window: 1024
+  sort_field: phi
