@@ -1,54 +1,49 @@
-"""Tune the CLUE parameters for every detector collection.
-
-Runs one Optuna study per detector on the tuning subset of the train split, and
-writes the best parameter set to ``results/clue_parameters_<coords>_<objective>.json``.
-The coordinate system and the objective come from ``config/experiment.yaml``.
-
-Usage::
+"""Tune CLUE's parameters on the tuning window, one Optuna study per subsystem.
 
     python -m scripts.tune_clue
+
+Writes ``results/clue_parameters.json``, which ``scripts.score --algo clue --params`` reads.
+Tuning runs on a window disjoint from the reported events, and :mod:`src.config` refuses to
+load a configuration where the two overlap -- tuning CLUE on the events it is reported on
+would hand it an advantage the MaskFormer does not have.
 """
 
+import argparse
 import json
+from pathlib import Path
 
-from src.clue.tuning import tune_detector
-from src.config import RESULTS_DIR, settings
-from src.data.loader import load_calo_events, select_events
+from src.clue.tuning import tune_subsystem
+from src.config import RESULTS_DIR, settings, store_expectations, store_path
+from src.io.event_store import EventStore
 
 
-def main():
-    config = settings()
-    coords = config["clue"]["coords"]
-    objective = config["clue"]["objective"]
-    n_tune_events = config["splits"]["clue_tune_events"]
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--store", type=Path, default=None, help="defaults to dataset.<active>.tune_store")
+    parser.add_argument("--out", type=Path, default=RESULTS_DIR / "clue_parameters.json")
+    parser.add_argument("--events", type=int, default=0, help="cap the number of tuning events")
+    parser.add_argument("--trials", type=int, default=0, help="override clue.optuna_trials")
+    parser.add_argument("--storage", default=None, help="optuna storage URL, e.g. sqlite:///results/clue.db")
+    args = parser.parse_args()
 
-    print(f"Tuning CLUE on {n_tune_events} events "
-          f"(coords={coords}, objective={objective}, "
-          f"trials={config['clue']['optuna_trials']} per detector)")
+    cfg = settings()
+    if args.trials:
+        cfg["clue"]["optuna_trials"] = args.trials
 
-    events = select_events(load_calo_events(), "train").iloc[:n_tune_events]
-    storage = f"sqlite:///{RESULTS_DIR / 'clue_studies.db'}"
+    store = EventStore(args.store or store_path("tune_store"), expect=store_expectations())
+    records = [store[i] for i in range(min(args.events or len(store), len(store)))]
+    print(f"tuning on {len(records)} events from {store.root}")
 
-    best = {}
-    for detector in config["detectors"]:
-        print(f"\n=== {detector} ===")
-        parameters, value = tune_detector(events, detector, storage_url=storage)
-        best[detector] = {"parameters": parameters, "objective_value": value}
-        print(f"best {objective} = {value:.4f}")
-        for name, number in parameters.items():
-            print(f"    {name:10s} {number:.6g}")
+    result = {"coords": cfg["clue"]["coords"], "n_tune_events": len(records), "subsystems": {}}
+    for subsystem in cfg["detectors"]:
+        print(f"\n=== {subsystem} ===", flush=True)
+        params, value = tune_subsystem(records, subsystem, storage_url=args.storage)
+        result["subsystems"][subsystem] = {"parameters": params, "objective": value}
+        print(f"  best f1 {value:.4f}  " + "  ".join(f"{k}={v:.4g}" for k, v in params.items()))
 
-    RESULTS_DIR.mkdir(exist_ok=True)
-    out_path = RESULTS_DIR / f"clue_parameters_{coords}_{objective}.json"
-    with open(out_path, "w") as handle:
-        json.dump({
-            "coords": coords,
-            "objective": objective,
-            "n_tune_events": n_tune_events,
-            "dataset": config["dataset"]["active"],
-            "detectors": best,
-        }, handle, indent=2)
-    print(f"\nWrote {out_path}")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result, indent=2))
+    print(f"\nwrote {args.out}")
 
 
 if __name__ == "__main__":

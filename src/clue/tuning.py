@@ -1,155 +1,212 @@
-"""Hyperparameter search for the CLUE baseline.
+"""Tuning CLUE's parameters with Optuna, against the same scorer that reports the result.
 
-CLUE exposes three parameters per pass, and their best values depend on the cell
-pitch, which differs by an order of magnitude between the electromagnetic and
-hadronic sections. Each detector collection therefore gets its own search.
+Tuning toward one quantity and reporting another leaves the reported number optimised for
+nothing, so the objective here calls :func:`~src.evaluation.metrics.score_event` -- literally
+the same function that produces the thesis tables, through the same Hungarian matcher. There
+is no second, cheaper definition of "good" anywhere in this file.
 
-Two objectives are available. ``cluster_f1`` maximises the harmonic mean of
-energy-weighted purity and efficiency, which is the clustering task itself.
-``jet`` maximises truth-to-reconstructed jet energy matching, which is the
-physics observable. Both are supported so the effect of the choice can be
-measured; whichever produced a reported number must be stated alongside it.
+Tuning runs on its own event window, disjoint from the one that is reported. CLUE needs no
+training, so it could in principle be tuned anywhere; tuning it on the evaluation events
+would nonetheless hand it an advantage the MaskFormer does not have, since the model's own
+working point was chosen on a separate window. :func:`src.config._validate` enforces the
+disjointness rather than trusting it.
 
-The objective uses exactly the metric defined in :mod:`src.evaluation.metrics`,
-so the baseline is tuned toward the quantity it is later scored on.
+Each subsystem is tuned independently. Their cell energies and geometries differ by an order
+of magnitude -- ECAL layers sit 5.05 mm apart and HCAL layers 51 mm -- so a single density
+radius cannot mean the same thing in both.
+
+The jet objective that used to live here is gone with the rest of the jet work; it will come
+back when the `particle_min_pt` question is settled.
 """
 
+from collections.abc import Mapping, Sequence
+
+import numpy as np
 import optuna
+import pandas as pd
 
-from src.clue.pipeline import cluster_detector
+from src.clue.pipeline import PARAMETER_NAMES, cluster_subsystem
 from src.config import settings
-from src.data.loader import hit_energy_mask
-from src.data.truth import reconstructable_particles
-from src.evaluation.jets import energy_match_score
-from src.evaluation.metrics import MetricAccumulator
+from src.evaluation.metrics import score_event
 
-PARAMETER_NAMES = ["d_c_2d", "rho_c_2d", "d_o_2d", "d_c_3d", "rho_c_3d", "d_o_3d", "z_scale"]
+SEARCH_PARAMETERS = ("d_c_2d", "rho_c_2d", "d_c_3d", "rho_c_3d", "depth_scale")
 
 
-def suggest_parameters(trial, detector):
-    """Draw one CLUE parameter set for a detector from its search ranges.
+class _RestrictedTruth:
+    """An EventRecord view whose truth partition is masked to one subsystem.
 
-    The linking radii are sampled as multiples of their density radius rather
-    than independently, because a linking radius smaller than the density radius
-    is not meaningful and the two are strongly correlated.
-
-    Args:
-        trial: the Optuna trial.
-        detector: detector collection name.
-
-    Returns:
-        dict: the parameters :func:`src.clue.pipeline.cluster_detector` expects.
+    A per-subsystem trial should not be penalised for particles it was never shown, so the
+    cells outside the subsystem are marked unowned before scoring. Everything else on the
+    record passes straight through.
     """
-    config = settings()["clue"]
-    space = config["search"][config["coords"]][detector]
-    factor_low, factor_high = config["search"]["outlier_distance_factor"]
-    rho_c_3d_low, rho_c_3d_high = config["search"]["rho_c_3d"]
-    log_scale = config["coords"] == "etaphi"
 
-    d_c_2d = trial.suggest_float("d_c_2d", *space["d_c_2d"], log=log_scale)
-    d_c_3d = trial.suggest_float("d_c_3d", *space["d_c_3d"], log=log_scale)
+    def __init__(self, record, truth_label):
+        self._record = record
+        self.truth_label = truth_label
+
+    @property
+    def truth_deposit(self):
+        """Masked to match `truth_label`.
+
+        Without this the underlying record's property would be delegated through
+        ``__getattr__`` and would compute itself from the *unmasked* labels. The scorer
+        only ever reads it where the masked label is valid, so the result would happen to
+        come out right today -- but silently, and only by coincidence.
+        """
+        deposit = self._record.truth_deposit.copy()
+        deposit[self.truth_label < 0] = 0.0
+        return deposit
+
+    def __getattr__(self, name):
+        return getattr(self._record, name)
+
+
+def suggest_parameters(trial: optuna.Trial, subsystem: str, config: Mapping | None = None) -> dict[str, float]:
+    """Draw one parameter set for `subsystem` from the configured search ranges.
+
+    The two outlier distances are sampled as a *multiple* of their density radius rather
+    than independently. They are only meaningful relative to it -- an outlier distance below
+    the density radius has no effect at all -- so sampling them freely would spend most of
+    the budget on combinations that cannot differ from one another.
+
+    Everything is sampled logarithmically: the ranges span two to three decades, and a
+    uniform draw would put almost every trial in the top decade.
+    """
+    config = config or settings()["clue"]
+    ranges = config["search"][config["coords"]][subsystem]
+
+    params: dict[str, float] = {}
+    for name in SEARCH_PARAMETERS:
+        low, high = ranges[name]
+        params[name] = trial.suggest_float(name, low, high, log=True)
+
+    low, high = config["search"]["outlier_distance_factor"]
+    params["d_o_2d"] = params["d_c_2d"] * trial.suggest_float("d_o_2d_factor", low, high)
+    params["d_o_3d"] = params["d_c_3d"] * trial.suggest_float("d_o_3d_factor", low, high)
+    return params
+
+
+#: A trial producing more than this many clusters per truth particle is rejected without
+#: being scored. Such a parameter set has shattered the event into near-singletons and is
+#: never going to win, but the overlap matrix and the Hungarian solve both scale with the
+#: cluster count, so scoring it properly can cost minutes where a normal trial costs seconds.
+MAX_CLUSTERS_PER_PARTICLE = 8
+
+
+def score_parameters(
+    records: Sequence,
+    subsystem: str,
+    params: Mapping[str, float],
+    config: Mapping | None = None,
+    metrics: Mapping | None = None,
+) -> dict[str, float]:
+    """Run CLUE over `records` for one subsystem and score it with the reporting metric."""
+    config = config or settings()["clue"]
+    metrics = metrics or settings()["metrics"]
+    working_point = metrics["working_points"][0]
+
+    particle_tables, cluster_tables = [], []
+    for record in records:
+        ids, selected = cluster_subsystem(record, subsystem, params, coords=config["coords"], backend=config["backend"])
+        if not selected.any():
+            continue
+
+        labels = np.full(record.n_hits, -1, dtype=np.int32)
+        clustered = ids >= 0
+        n_clusters = 0
+        if clustered.any():
+            used, compact = np.unique(ids[clustered], return_inverse=True)
+            labels[clustered] = compact.astype(np.int32)
+            n_clusters = int(used.size)
+
+        if n_clusters > MAX_CLUSTERS_PER_PARTICLE * max(record.n_particles, 1):
+            return {"efficiency": 0.0, "purity": 0.0, "f1": 0.0}
+
+        masked = record.truth_label.copy()
+        masked[~selected] = -1
+
+        particles, clusters, _ = score_event(
+            _RestrictedTruth(record, masked),
+            labels,
+            n_clusters,
+            algo="clue",
+            split_fraction=metrics["split_fraction"],
+            min_overlap=metrics["min_overlap"],
+        )
+        # Particles with no cell in this subsystem are not this trial's problem.
+        particle_tables.append(particles[particles["n_hits"] > 0])
+        cluster_tables.append(clusters)
+
+    if not particle_tables:
+        return {"efficiency": 0.0, "purity": 0.0, "f1": 0.0}
+
+    particles = pd.concat(particle_tables, ignore_index=True)
+    clusters = pd.concat(cluster_tables, ignore_index=True)
+    efficiency = float((particles["eff_e"] >= working_point).mean()) if len(particles) else 0.0
+    purity = float((clusters["pur_e"] >= working_point).mean()) if len(clusters) else 0.0
+    total = efficiency + purity
     return {
-        "d_c_2d": d_c_2d,
-        "rho_c_2d": trial.suggest_float("rho_c_2d", *space["rho_c_2d"], log=True),
-        "d_o_2d": d_c_2d * trial.suggest_float("d_o_2d_factor", factor_low, factor_high),
-        "d_c_3d": d_c_3d,
-        "rho_c_3d": trial.suggest_float("rho_c_3d", rho_c_3d_low, rho_c_3d_high, log=True),
-        "d_o_3d": d_c_3d * trial.suggest_float("d_o_3d_factor", factor_low, factor_high),
-        "z_scale": trial.suggest_float("z_scale", *space["z_scale"], log=log_scale),
+        "efficiency": efficiency,
+        "purity": purity,
+        "f1": (2 * efficiency * purity / total) if total > 0 else 0.0,
     }
 
 
-def score_cluster_f1(events, detector, params):
-    """Pooled purity/efficiency F1 for one parameter set on one detector."""
+def make_objective(records: Sequence, subsystem: str):
+    """Build the Optuna objective for one subsystem."""
     config = settings()["clue"]
-    accumulator = MetricAccumulator()
+    metrics = settings()["metrics"]
 
-    for index in range(len(events)):
-        event = events.iloc[index]
-        energy_mask = hit_energy_mask(event)
-        cluster_ids, selected = cluster_detector(
-            event, detector, params, hit_mask=energy_mask,
-            coords=config["coords"], backend=config["backend"],
-        )
-        if not selected.any():
-            continue
-        targets = reconstructable_particles(event, hit_mask=selected)
-        accumulator.add_event(event, cluster_ids, targets, hit_mask=selected)
+    def objective(trial: optuna.Trial) -> float:
+        scores = score_parameters(records, subsystem, suggest_parameters(trial, subsystem, config), config, metrics)
+        trial.set_user_attr("efficiency", scores["efficiency"])
+        trial.set_user_attr("purity", scores["purity"])
+        return scores["f1"]
 
-    return accumulator
+    return objective
 
 
-def score_jet_matching(events, detector, params):
-    """Pooled jet energy-matching score for one parameter set on one detector."""
-    config = settings()["clue"]
-    score_sum = 0.0
-    n_truth_jets = 0
-
-    for index in range(len(events)):
-        event = events.iloc[index]
-        energy_mask = hit_energy_mask(event)
-        cluster_ids, selected = cluster_detector(
-            event, detector, params, hit_mask=energy_mask,
-            coords=config["coords"], backend=config["backend"],
-        )
-        if not selected.any():
-            continue
-        score, count = energy_match_score(event, cluster_ids, hit_mask=selected)
-        score_sum += score
-        n_truth_jets += count
-
-    return score_sum, n_truth_jets
-
-
-def make_objective(events, detector):
-    """Build the Optuna objective for one detector, per the configured target."""
-    objective_name = settings()["clue"]["objective"]
-
-    def cluster_objective(trial):
-        params = suggest_parameters(trial, detector)
-        accumulator = score_cluster_f1(events, detector, params)
-        trial.set_user_attr("purity", accumulator.purity())
-        trial.set_user_attr("efficiency", accumulator.efficiency())
-        trial.set_user_attr("n_targets", accumulator.n_targets)
-        return accumulator.f1()
-
-    def jet_objective(trial):
-        params = suggest_parameters(trial, detector)
-        score_sum, n_truth_jets = score_jet_matching(events, detector, params)
-        if n_truth_jets == 0:
-            return 0.0
-        trial.set_user_attr("n_truth_jets", n_truth_jets)
-        return score_sum / n_truth_jets
-
-    if objective_name == "jet":
-        return jet_objective
-    if objective_name == "cluster_f1":
-        return cluster_objective
-    raise ValueError(
-        f"Unknown clue.objective {objective_name!r}; expected cluster_f1 or jet."
-    )
-
-
-def tune_detector(events, detector, storage_url=None):
-    """Run the search for one detector and return its best parameters.
-
-    The sampler is seeded from the experiment file, so repeating a study on the
-    same events reproduces the same result.
+def tune_subsystem(records: Sequence, subsystem: str, storage_url: str | None = None) -> tuple[dict[str, float], float]:
+    """Search for the best parameters for one subsystem.
 
     Returns:
-        tuple: ``(best_parameters, best_value)``.
+        ``(parameters, objective_value)``, the parameters being the seven entries of
+        :data:`~src.clue.pipeline.PARAMETER_NAMES` with the outlier distances multiplied out.
     """
-    config = settings()
+    config = settings()["clue"]
+
     study = optuna.create_study(
+        study_name=f"clue_{config['coords']}_{subsystem}",
         direction="maximize",
-        sampler=optuna.samplers.TPESampler(seed=config["seed"]),
-        study_name=f"clue_{config['clue']['coords']}_{config['clue']['objective']}_{detector}",
+        sampler=optuna.samplers.TPESampler(seed=settings()["seed"]),
         storage=storage_url,
         load_if_exists=storage_url is not None,
     )
-    study.optimize(make_objective(events, detector), n_trials=config["clue"]["optuna_trials"])
+    study.optimize(make_objective(records, subsystem), n_trials=config["optuna_trials"])
 
     best = dict(study.best_params)
-    best["d_o_2d"] = best["d_c_2d"] * best.pop("d_o_2d_factor")
-    best["d_o_3d"] = best["d_c_3d"] * best.pop("d_o_3d_factor")
-    return {name: best[name] for name in PARAMETER_NAMES}, study.best_value
+    params = {name: best[name] for name in SEARCH_PARAMETERS}
+    params["d_o_2d"] = params["d_c_2d"] * best["d_o_2d_factor"]
+    params["d_o_3d"] = params["d_c_3d"] * best["d_o_3d_factor"]
+
+    # An optimum pressed against a search boundary is a tuning failure rather than a result:
+    # the real optimum is probably outside the range that was searched, and reporting CLUE
+    # at the edge would understate it.
+    #
+    # The test is on position within the LOG range, because that is how the parameters are
+    # sampled. Testing near-equality to the endpoint instead would essentially never fire:
+    # the optimiser rarely returns the exact bound, it returns something a few percent
+    # inside it, which is just as much a sign the range is wrong.
+    ranges = config["search"][config["coords"]][subsystem]
+    for name in SEARCH_PARAMETERS:
+        low, high = ranges[name]
+        position = np.log(params[name] / low) / np.log(high / low)
+        if position < 0.05 or position > 0.95:
+            edge = "lower" if position < 0.5 else "upper"
+            print(
+                f"  WARNING {subsystem}.{name} = {params[name]:.4g} sits in the {edge} 5% of its "
+                f"search range [{low:g}, {high:g}]; widen it and re-run before reporting."
+            )
+
+    assert set(params) == set(PARAMETER_NAMES)
+    return params, float(study.best_value)

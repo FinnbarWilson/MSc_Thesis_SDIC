@@ -23,19 +23,34 @@ dependencies:
   - optuna=4.9.0
   - fastjet=3.5.1.3
 
+  # A CLUEstering dependency, taken from conda rather than left to pip: there is no
+  # scikit-learn wheel for this python/numpy combination, so pip falls back to building it
+  # from source and the install fails outright.
+  - scikit-learn
+
   # Figures
   - matplotlib=3.10.9
 
   # Testing
   - pytest
 
-  # Build tools needed to compile the CLUEstering CPU backends
-  - boost
+  # Build tools needed to compile the CLUEstering CPU backends.
+  #
+  # libboost-headers, not boost: the CLUE kernels only ever include Boost headers,
+  # while the `boost` metapackage additionally pulls libboost-python, which pins an
+  # icu that no longer co-solves with pyarrow 24 / pandas 3 on this platform. Boost
+  # for linux-64 also stops at 1.85 in the `boost` form, whereas the header-only
+  # package tracks 1.91, so this is both the smaller and the newer dependency.
+  - libboost-headers
   - cmake
   - ninja
   - cxx-compiler
 
   - pip
   - pip:
+      # colliderml is deliberately absent. It existed to decode raw ColliderML parquet, but
+      # this repository no longer opens one: both algorithms read the event store dumped by
+      # hepattn, which is what makes "CLUE and MaskFormer saw identical cells" structural.
+      # It also drags in h5py, which has no wheel here and fails to build against the
+      # system HDF5.
       - CLUEstering==2.11.0
-      - colliderml==0.4.2

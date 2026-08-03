@@ -1,0 +1,9 @@
+500 events from /home/xucapfwi/eventstore/ttbar_pu0_20250_20750_v1
+  checkpoint  epoch=027-val_loss=18.26303.ckpt
+  cuts        {'calohit_min_energy': 0.0002}  {'event_max_num_particles': 1000, 'particle_max_abs_eta': 4.0, 'particle_min_num_calohits': 3, 'particle_min_pt': 0.5}
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/particles_maskformer.parquet  (269059 rows, 27.5 MB)
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/clusters_maskformer.parquet  (276755 rows, 11.3 MB)
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/events_maskformer.parquet  (500 rows, 0.0 MB)
+
+  eff@0.5 (energy) 0.318   pur@0.5 (energy) 0.310
+  split 0.319   merge 0.276   frag 0.568
