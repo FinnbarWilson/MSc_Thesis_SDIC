@@ -30,6 +30,12 @@ dependencies:
 
   # Figures
   - matplotlib=3.10.9
+  # Matplotlib style sheets for publication figures. Supplies the `science` and `nature`
+  # styles applied in src/plotting/style.py: serif-free tick-in-on-all-sides axes, hairline
+  # spines and a compact figure size, which is what makes the figures look native to a thesis
+  # rather than to a notebook. It ships styles and nothing else, so nothing imports it beyond
+  # style.py, and a missing install degrades to matplotlib's defaults rather than failing.
+  - scienceplots=2.2.2
 
   # Testing
   - pytest

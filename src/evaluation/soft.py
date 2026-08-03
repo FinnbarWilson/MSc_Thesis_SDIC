@@ -225,7 +225,32 @@ def score_event_soft(
     })[SOFT_PARTICLE_COLUMNS]
 
 
-def sharing_diagnostics(record, pred_cell: np.ndarray) -> dict:
+def _effective_claims(cell: np.ndarray, weight: np.ndarray, n_hits: int) -> float:
+    """Mean perplexity of each cell's division: how many ways it is *effectively* split.
+
+    A raw count of claims cannot be compared across methods here, because it depends on how
+    many claims each method happens to emit rather than on how it divides a cell. The mask
+    head emits one entry per cell above a probability threshold; the incidence head is a
+    softmax over queries and is stored as a fixed top-k, so its raw count is pinned to k --
+    measured at exactly 4.000 when k was 4, which is the truncation reporting itself rather
+    than the model. Perplexity, ``exp(-sum p log p)`` over a cell's normalised weights, is
+    free of that: twelve extra claims of weight 0.001 each move it almost not at all.
+
+    Compare against the truth value computed the same way, not against 1: truth divides a
+    cell 1.22 ways by raw count, and its perplexity is the number to hold this against.
+    """
+    cell = np.asarray(cell)
+    weight = np.asarray(weight, dtype=np.float64)
+    if cell.size == 0:
+        return 0.0
+    total = np.bincount(cell, weights=weight, minlength=n_hits)
+    share = weight / np.maximum(total[cell], 1e-30)
+    entropy = -np.bincount(cell, weights=share * np.log(np.maximum(share, 1e-30)), minlength=n_hits)
+    touched = np.bincount(cell, minlength=n_hits) > 0
+    return float(np.exp(entropy[touched]).mean()) if touched.any() else 0.0
+
+
+def sharing_diagnostics(record, pred_cell: np.ndarray, pred_weight: np.ndarray | None = None) -> dict:
     """How often each side says a cell is shared, which is what makes the soft numbers legible.
 
     Without this the soft efficiency looks like a bug. A method whose masks overlap twice as
@@ -243,12 +268,21 @@ def sharing_diagnostics(record, pred_cell: np.ndarray) -> dict:
     """
     claims = np.bincount(np.asarray(pred_cell), minlength=record.n_hits)
     owners = np.bincount(record.truth_indices, minlength=record.n_hits)
-    return {
+    out = {
         "claims_per_cell": float(claims[claims > 0].mean()) if (claims > 0).any() else 0.0,
         "shared_cell_frac": float((claims[claims > 0] > 1).mean()) if (claims > 0).any() else 0.0,
         "truth_owners_per_cell": float(owners[owners > 0].mean()) if (owners > 0).any() else 0.0,
         "truth_shared_frac": float((owners[owners > 0] > 1).mean()) if (owners > 0).any() else 0.0,
     }
+
+    # The k-independent pair. Quote these when comparing methods that emit different numbers
+    # of claims; `claims_per_cell` above is kept because it is what earlier results reported.
+    if pred_weight is not None:
+        out["eff_claims_per_cell"] = _effective_claims(pred_cell, pred_weight, record.n_hits)
+        out["truth_eff_owners_per_cell"] = _effective_claims(
+            record.truth_indices, record.truth_incidence, record.n_hits
+        )
+    return out
 
 
 def capability_summary(
@@ -276,6 +310,11 @@ def capability_summary(
                 "n_particles": len(group),
                 "claims_per_cell": float(shared.get("claims_per_cell", float("nan"))),
                 "truth_owners_per_cell": float(shared.get("truth_owners_per_cell", float("nan"))),
+                # The k-independent pair, and the one to quote when the methods emit different
+                # numbers of claims -- which they do, since the incidence head is stored as a
+                # fixed top-k and its raw count is pinned to it.
+                "eff_claims_per_cell": float(shared.get("eff_claims_per_cell", float("nan"))),
+                "truth_eff_owners_per_cell": float(shared.get("truth_eff_owners_per_cell", float("nan"))),
                 "eff_soft": float((group["eff_e"] >= working_point).mean()),
                 "eff_soft_mean": float(group["eff_e"].mean()),
                 "pur_soft": float((group["pur_e"] >= working_point).mean()),

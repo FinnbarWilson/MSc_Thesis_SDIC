@@ -35,6 +35,7 @@ def plot_binned(
     logx: bool = True,
     ylim: tuple[float, float] | None = (0.0, 1.05),
     by_event: bool = True,
+    band: bool = True,
 ) -> plt.Axes:
     """Draw one differential panel, one line per algorithm.
 
@@ -52,6 +53,10 @@ def plot_binned(
         by_event: for ``kind="fraction"``, take the interval by resampling events rather
             than assuming independent particles. On by default -- particles within an event
             are correlated, so the binomial interval is too narrow.
+        band: for ``kind="median"``, draw the interquartile band. Turn it off when several
+            methods share a panel: five translucent bands over the same axes stop being a
+            distribution and become a wash, which is what made the old four-panel headline
+            figure unreadable.
 
     The three kinds are drawn differently on purpose. Fractions and ratios get error bars,
     which mean uncertainty on the value. A median gets a shaded band, because the
@@ -78,10 +83,11 @@ def plot_binned(
         populated = result.count > 0
         colour = style.colour(algo)
         if kind == "median":
-            ax.fill_between(
-                result.centres[populated], result.low[populated], result.high[populated],
-                color=colour, alpha=0.16, linewidth=0,
-            )
+            if band:
+                ax.fill_between(
+                    result.centres[populated], result.low[populated], result.high[populated],
+                    color=colour, alpha=0.16, linewidth=0,
+                )
             ax.plot(
                 result.centres[populated], result.value[populated],
                 color=colour, marker=style.marker(algo), label=style.label(algo),
@@ -113,215 +119,222 @@ def plot_binned(
 def efficiency_and_purity_vs_energy(particles, clusters, working_point=0.5, out=None):
     """Deliverable 1: the headline plot, both algorithms on shared axes.
 
-    Four panels rather than two, for two reasons.
+    Two panels, not four. The earlier version drew the working-point fraction and the median
+    of the same quantity, one above the other, on the argument that a fraction cannot tell a
+    genuine distribution shift from a median drifting across the threshold. That is true, but
+    the median panels answered it with four overlapping interquartile bands covering most of
+    the axes, and nothing could be read out of them. The distribution question is better
+    handled by :func:`efficiency_decomposition`, which factorises the same number into two
+    readable pieces.
 
-    The working-point fraction on the top row is a step function on a continuous variable: it
-    cannot distinguish a method whose recovery distribution genuinely shifted from one whose
-    median merely drifted across 0.5, and the two methods here cross at almost exactly that
-    threshold. The median on the bottom row says which is happening, and its band is the
-    interquartile spread of the distribution itself.
-
-    The two columns also do NOT share an x-axis -- efficiency is binned in *particle* energy
-    and purity in *cluster* energy, which are different quantities over different objects.
-    Sitting side by side on identical-looking log axes they used to invite a comparison that
-    is not valid, so the columns are titled and labelled to make the distinction unmissable.
+    The two panels do NOT share an x-axis: efficiency is binned in *particle* energy and
+    purity in *cluster* energy, different quantities over different objects. Side by side on
+    identical-looking log axes that invites an invalid comparison, so the axis labels and the
+    in-panel notes both say which object is being counted.
     """
-    fig, axes = plt.subplots(2, 2, figsize=(10.0, 7.2))
-
-    plot_binned(
-        _by_algo(particles), "p_energy", "eff_e", diff.ENERGY_BINS,
-        threshold=working_point, ax=axes[0, 0],
-        xlabel="particle energy [GeV]",
-        ylabel=f"fraction with eff $\\geq$ {working_point}",
-    )
-    plot_binned(
-        _by_algo(clusters), "e_calib", "pur_e", diff.ENERGY_BINS,
-        threshold=working_point, ax=axes[0, 1],
-        xlabel="cluster energy [GeV, calibrated]",
-        ylabel=f"fraction with purity $\\geq$ {working_point}",
-    )
-    plot_binned(
-        _by_algo(particles), "p_energy", "eff_e", diff.ENERGY_BINS,
-        kind="median", ax=axes[1, 0],
-        xlabel="particle energy [GeV]", ylabel="energy efficiency (median, IQR)",
-    )
-    plot_binned(
-        _by_algo(clusters), "e_calib", "pur_e", diff.ENERGY_BINS,
-        kind="median", ax=axes[1, 1],
-        xlabel="cluster energy [GeV, calibrated]", ylabel="energy purity (median, IQR)",
-    )
-    axes[0, 0].set_title("Efficiency (per truth particle)")
-    axes[0, 1].set_title("Purity (per predicted cluster)")
-    for ax in axes[1]:
-        ax.set_ylim(0.0, 1.05)
-    return _finish(fig, out)
-
-
-def performance_vs_density(particles, working_point=0.5, out=None):
-    """Deliverable 2: the isolated-versus-jet-core story."""
-    fig, axes = plt.subplots(1, 2, figsize=(10.0, 3.9))
-
-    plot_binned(
-        _by_algo(particles), "dr_min", "eff_e", diff.DR_BINS,
-        threshold=working_point, ax=axes[0],
-        xlabel="$\\Delta R$ to nearest other target particle",
-        ylabel=f"fraction with energy efficiency $\\geq$ {working_point}",
-    )
-    plot_binned(
-        _by_algo(particles), "n_within_02", "eff_e", diff.DENSITY_BINS,
-        threshold=working_point, ax=axes[1], logx=False,
-        xlabel="target particles within $\\Delta R < 0.2$",
-        ylabel=f"fraction with energy efficiency $\\geq$ {working_point}",
-    )
-    axes[0].set_title("Isolation")
-    axes[1].set_title("Crowding")
-    return _finish(fig, out)
-
-
-def split_and_merge(particles, clusters, out=None):
-    """Deliverable 3: where the two algorithms are expected to differ most.
-
-    All three panels are **energy-weighted**, which is a change from the hit-counted versions
-    and, for the left panel, not a cosmetic one: above ~8 GeV the two definitions disagree on
-    the sign of MaskFormer's trend, hit-counted splitting falling with particle energy while
-    energy-weighted splitting rises. Reporting the hit-counted version would have supported
-    the opposite claim about whether the model fragments energetic showers.
-    :func:`weighting_comparison` shows both definitions side by side; on merging they very
-    nearly coincide.
-
-    The middle panel exists because both `n_frag` definitions share a blind spot: a particle
-    spread over more than ten clusters gives none of them 10%, so it registers as unsplit.
-    57% of particles here have more than ten cells, so that is not a corner case. `frag_frac`,
-    the share of the particle outside its largest piece, has no such blind spot.
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(14.0, 3.9))
-
-    plot_binned(
-        _by_algo(particles), "p_energy", "is_split_e", diff.ENERGY_BINS,
-        threshold=None, ax=axes[0],
-        xlabel="particle energy [GeV]", ylabel="split rate", ylim=(0.0, 1.05),
-    )
-    plot_binned(
-        _by_algo(particles), "p_energy", "frag_frac", diff.ENERGY_BINS,
-        kind="median", ax=axes[1],
-        xlabel="particle energy [GeV]", ylabel="energy outside largest piece",
-    )
-    plot_binned(
-        _by_algo(clusters), "e_calib", "is_merge_e", diff.ENERGY_BINS,
-        threshold=None, ax=axes[2],
-        xlabel="cluster energy [GeV, calibrated]", ylabel="merge rate", ylim=(0.0, 1.05),
-    )
-    axes[0].set_title("Split rate (energy-weighted)")
-    axes[1].set_title("Fragmentation (no blind spot)")
-    axes[2].set_title("Merge rate (energy-weighted)")
-    axes[1].set_ylim(0.0, 1.05)
-    return _finish(fig, out)
-
-
-def weighting_comparison(particles, clusters, out=None):
-    """The same split and merge definitions under hit counting and under energy weighting.
-
-    This is the figure that justifies changing the definition rather than merely asserting
-    the change, and it is worth reading because the answer is asymmetric. On the right the
-    two definitions of merging very nearly coincide, so nothing was being rescued there. On
-    the left they cross: MaskFormer's hit-counted split rate turns over above ~8 GeV and
-    falls, while its energy-weighted split rate keeps rising. The hit-counted turnover is the
-    `n_frag` blind spot, not a physical improvement -- a particle scattered over more than
-    ten clusters gives none of them the required 10% of its cells, so the most badly
-    fragmented particles are counted as unsplit.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(10.0, 3.9))
-
-    for ax, table, x, columns, xlabel, ylabel in (
-        (axes[0], particles, "p_energy", ("is_split", "is_split_e"), "particle energy [GeV]", "split rate"),
-        (axes[1], clusters, "e_calib", ("is_merge", "is_merge_e"), "cluster energy [GeV, calibrated]", "merge rate"),
-    ):
-        for algo, group in _by_algo(table).items():
-            if style.is_reference(algo):
-                continue
-            for column, dash, name in ((columns[0], "--", "hits"), (columns[1], "-", "energy")):
-                result = diff.binned_fraction(
-                    group[x].to_numpy(), group[column].to_numpy(), diff.ENERGY_BINS,
-                    cluster=group["sample_id"].to_numpy(),
-                )
-                populated = result.count > 0
-                ax.plot(
-                    result.centres[populated], result.value[populated],
-                    color=style.colour(algo), marker=style.marker(algo), markersize=3.5,
-                    linestyle=dash, label=f"{style.label(algo)} ({name})",
-                )
-        ax.set_xscale("log")
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_ylim(0.0, 1.05)
-        ax.legend()
-
-    axes[0].set_title("Split rate by definition")
-    axes[1].set_title("Merge rate by definition")
-    return _finish(fig, out)
-
-
-def reference_ceiling(particles, clusters, working_point=0.5, out=None):
-    """What the task allows, next to what the two methods achieve.
-
-    The single most important context for every other figure. An efficiency of 0.31 is not
-    interpretable against 1.0, because 1.0 is not available: the left panel shows what an
-    idealised method reaches when handed the true particle count and the true shower axes,
-    and the right shows the purity no exclusive-partition algorithm can exceed once particles
-    that share each other's cells are merged and sub-threshold deposits are accounted for.
-
-    Read the two references differently. The seeded one is not a bound -- a better assignment
-    rule beats it, and on purity it is beaten by both real methods, which is itself the
-    finding that nearest-axis assignment is a weak strategy. The resolution one is a genuine
-    ceiling on purity, and it is low mostly because 46% of the calorimeter energy comes from
-    particles below the pT cut and has to land somewhere.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(10.0, 3.9))
+    fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.1))
 
     plot_binned(
         _by_algo(particles), "p_energy", "eff_e", diff.ENERGY_BINS,
         threshold=working_point, ax=axes[0],
         xlabel="particle energy [GeV]",
-        ylabel=f"fraction with eff $\\geq$ {working_point}",
+        ylabel=f"fraction of particles\n$\\geq${working_point:g} recovered",
     )
     plot_binned(
         _by_algo(clusters), "e_calib", "pur_e", diff.ENERGY_BINS,
         threshold=working_point, ax=axes[1],
         xlabel="cluster energy [GeV, calibrated]",
-        ylabel=f"fraction with purity $\\geq$ {working_point}",
+        ylabel=f"fraction of clusters\n$\\geq${working_point:g} pure",
     )
-    axes[0].set_title("Efficiency against reference")
-    axes[1].set_title("Purity against ceiling")
+
+    style.panel_labels(axes)
+    style.clear_panel_legends(axes)
+    fig.tight_layout()
+    style.legend_below(fig)
+    return _finish(fig, out)
+
+
+def performance_vs_density(particles, working_point=0.5, out=None):
+    """Deliverable 2: the isolated-versus-jet-core story, and where the headroom is.
+
+    One panel, not two. The second panel binned by the count of neighbours within dR < 0.2
+    and said the same thing as the first with the axis reversed; two ways of measuring
+    crowding is one more than the figure needs.
+
+    This is the plot that decides where effort is worth spending, which is why the gap to the
+    reference is annotated rather than left to be eyeballed. Both methods sit far below what
+    perfect-seeded geometry achieves on isolated particles and close to it inside a jet core,
+    so the room to improve is in the easy regime, not the hard one.
+    """
+    fig, ax = plt.subplots(figsize=(5.4, 3.2))
+
+    plot_binned(
+        _by_algo(particles), "dr_min", "eff_e", diff.DR_BINS,
+        threshold=working_point, ax=ax,
+        xlabel="$\\Delta R$ to nearest other target particle",
+        ylabel=f"fraction of particles\n$\\geq${working_point:g} recovered",
+    )
+
+    ax.get_legend().remove()
+    fig.tight_layout()
+    style.legend_below(fig)
+    return _finish(fig, out)
+
+
+def split_and_merge(particles, clusters, out=None):
+    """Deliverable 3: the two ways a clustering can be wrong, and where each method fails.
+
+    Both panels are **energy-weighted**, and for splitting that is not a cosmetic choice:
+    above ~8 GeV the hit-counted and energy-weighted definitions disagree on the sign of
+    MaskFormer's trend. :func:`weighting_comparison` shows that directly.
+
+    Splitting is drawn as `frag_frac` rather than as the split *rate* that used to occupy a
+    third panel. Both `n_frag` definitions share a blind spot -- a particle spread over more
+    than ten clusters gives none of them the required 10%, so it registers as unsplit, and
+    57% of particles here have more than ten cells. `frag_frac`, the share of a particle's
+    energy outside its largest piece, has no such blind spot, so it is the one to report and
+    the rate panel was showing a worse version of the same thing.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.1))
+
+    plot_binned(
+        _by_algo(particles), "p_energy", "frag_frac", diff.ENERGY_BINS,
+        kind="median", band=False, ax=axes[0],
+        xlabel="particle energy [GeV]",
+        ylabel="energy outside the\nlargest cluster",
+    )
+    plot_binned(
+        _by_algo(clusters), "e_calib", "is_merge_e", diff.ENERGY_BINS,
+        threshold=None, ax=axes[1],
+        xlabel="cluster energy [GeV, calibrated]",
+        ylabel="clusters holding $\\geq$2 particles", ylim=(0.0, 1.05),
+    )
+    axes[0].set_ylim(0.0, 1.05)
+
+    style.panel_labels(axes)
+    style.clear_panel_legends(axes)
+    fig.tight_layout()
+    style.legend_below(fig)
+    return _finish(fig, out)
+
+
+def weighting_comparison(particles, clusters, out=None):
+    """Why splitting is reported energy-weighted: the two definitions disagree on the sign.
+
+    A methods figure, not a results one, and it exists because the choice changes the
+    conclusion rather than the decimal place. Counting cells, MaskFormer's split rate turns
+    over above ~8 GeV and falls, which would read as "the model handles energetic showers
+    better". Weighting by energy it keeps rising. The turnover is the `n_frag` blind spot: a
+    particle scattered over more than ten clusters gives none of them the required 10% of its
+    cells, so the most badly fragmented particles are counted as unsplit.
+
+    Only splitting is shown. The merge panel that used to sit beside it showed two curves that
+    very nearly coincide -- nothing is rescued or lost there by the choice of weighting, so
+    the panel was spending half the figure to say "no effect".
+    """
+    del clusters  # merging is insensitive to the weighting; see the docstring.
+    fig, ax = plt.subplots(figsize=(5.0, 3.2))
+
+    # Two methods, not all of them, and direct labels rather than a legend. The incidence head
+    # is a scoring variant of the same model and behaves like the mask head here, so it added
+    # a third hue and two more legend entries to make a point already made. Four long legend
+    # entries then took a third of the panel; the line ends say the same thing in place.
+    shown = ("maskformer", "clue")
+    tables = _by_algo(particles, references=False)
+    for algo in shown:
+        if algo not in tables:
+            continue
+        group = tables[algo]
+        for column, dash in (("is_split", ":"), ("is_split_e", "-")):
+            result = diff.binned_fraction(
+                group["p_energy"].to_numpy(), group[column].to_numpy(), diff.ENERGY_BINS,
+                cluster=group["sample_id"].to_numpy(),
+            )
+            populated = result.count > 0
+            centres, values = result.centres[populated], result.value[populated]
+            ax.plot(centres, values, color=style.colour(algo), marker=style.marker(algo), linestyle=dash)
+            ax.annotate(
+                "counting cells" if column == "is_split" else "weighting by energy",
+                xy=(centres[-1], values[-1]), xytext=(4, 0), textcoords="offset points",
+                va="center", fontsize=7.4, color=style.colour(algo),
+            )
+        # Inside the axes, not to the left of them: outside-left ran straight through the
+        # y-axis label.
+        ax.annotate(
+            style.label(algo), xy=(centres[0], values[0]), xytext=(6, 9), textcoords="offset points",
+            ha="left", va="bottom", fontsize=8, color=style.colour(algo),
+        )
+
+    ax.set_xscale("log")
+    ax.set_xlim(0.35, 320)
+    ax.set_xlabel("particle energy [GeV]")
+    ax.set_ylabel("particles split across $\\geq$2 clusters")
+    ax.set_ylim(0.0, 0.75)
+    ax.axvspan(8, 320, color="#000000", alpha=0.04, linewidth=0)
+
+    fig.tight_layout()
     return _finish(fig, out)
 
 
 def energy_decomposition(particles, out=None):
-    """Why each method loses energy: unclustered cells versus cells given to another cluster.
+    """Where a particle's deposited energy ends up, and how the two failure modes differ.
 
-    A density threshold and genuine mis-clustering are different failures with different
-    fixes, and the two algorithms are expected to fail in different proportions -- CLUE
-    discards cells as noise, while the model misassigns them.
+    The two methods recover almost the same share; what separates them is how they lose the
+    rest. CLUE clusters nearly every cell, so its losses are almost all *misassignment* --
+    energy that landed in some other particle's cluster. MaskFormer is trained to claim only
+    cells belonging to target particles, so a large part of its loss is energy it never
+    claimed at all. Those are different failures needing different fixes, and the aggregate
+    efficiency cannot tell them apart.
+
+    Drawn as one stacked bar per method rather than as stacked areas against energy. The area
+    version put each method in its own panel, which meant the only segment that could be
+    compared between methods was the bottom one -- everything above it started from a
+    different baseline, so the figure showed three coloured shapes and answered nothing at a
+    glance. Bars on a shared axis with the numbers written on them answer it immediately.
     """
-    fig, ax = plt.subplots()
-    for algo, table in _by_algo(particles, references=False).items():
-        total = table["e_dep_calib"].to_numpy()
-        for column, linestyle, name in (
-            ("e_lost_noise", "--", "unclustered"),
-            ("e_lost_other", ":", "wrong cluster"),
-        ):
-            result = diff.binned_ratio(table["p_energy"].to_numpy(), table[column].to_numpy(), total, diff.ENERGY_BINS)
-            populated = result.count > 0
-            ax.plot(
-                result.centres[populated], result.value[populated],
-                color=style.colour(algo), linestyle=linestyle,
-                marker=style.marker(algo), markersize=3,
-                label=f"{style.label(algo)}: {name}",
-            )
-    ax.set_xscale("log")
-    ax.set_xlabel("particle energy [GeV]")
-    ax.set_ylabel("fraction of deposited energy lost")
-    ax.set_ylim(0.0, 1.05)
-    ax.legend()
+    tables = _by_algo(particles, references=False)
+    fig, ax = plt.subplots(figsize=(5.6, 0.62 * len(tables) + 0.85))
+
+    # A single-hue ordinal ramp: the three fates are ORDERED (kept, misassigned, never
+    # claimed), and one hue light-to-dark says so where three unrelated hues would not. It
+    # also avoids reusing the method colours to mean something else in this one figure.
+    fates = (("recovered", "#3d4f5c"), ("wrong cluster", "#8fa3ae"), ("unclustered", "#dfe6ea"))
+
+    names = list(tables)
+    positions = np.arange(len(names))[::-1]
+    shares = {name: [] for name, _ in fates}
+    for table in tables.values():
+        total = table["e_dep_calib"].to_numpy().sum()
+        lost_noise = table["e_lost_noise"].to_numpy().sum() / total
+        lost_other = table["e_lost_other"].to_numpy().sum() / total
+        shares["unclustered"].append(lost_noise)
+        shares["wrong cluster"].append(lost_other)
+        shares["recovered"].append(max(1.0 - lost_noise - lost_other, 0.0))
+
+    left = np.zeros(len(names))
+    for name, colour in fates:
+        values = np.array(shares[name])
+        ax.barh(positions, values, left=left, color=colour, height=0.68, label=name,
+                edgecolor="white", linewidth=0.8)
+        for pos, value, start in zip(positions, values, left, strict=True):
+            if value > 0.06:
+                ax.text(start + value / 2, pos, f"{value:.0%}", ha="center", va="center",
+                        fontsize=8, color="white" if name == "recovered" else "#2b2b2b")
+        left += values
+
+    ax.set_yticks(positions)
+    ax.set_yticklabels([style.label(a) for a in names])
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel("share of the particle's deposited energy")
+    ax.grid(visible=False)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    # which="both": scienceplots turns minor ticks on and mirrors them to all four sides, so
+    # suppressing majors alone leaves a row of stray marks along the top of a bar chart.
+    ax.tick_params(axis="y", which="both", length=0)
+    ax.tick_params(axis="x", which="both", top=False)
+    ax.minorticks_off()
+    fig.tight_layout()
+    style.legend_below(fig, *ax.get_legend_handles_labels(), y=0.04)
     return _finish(fig, out)
 
 
@@ -369,112 +382,92 @@ def working_point_curve(scan: pd.DataFrame, reference: Mapping[str, tuple[float,
     return _finish(fig, out)
 
 
-def efficiency_decomposition(particles, working_point=0.5, out=None):
-    """Why the efficiency is what it is: the match rate is a hard ceiling on it.
+def efficiency_decomposition(particles, clusters, working_point=0.5, out=None):
+    """The three questions the one-to-one matching answers, which one number hides.
 
-    A truth particle can only reach the working point if the one-to-one assignment gave it
-    a cluster at all, so `eff@wp = P(matched) x P(eff >= wp | matched)`. Plotting the two
-    factors separately says whether an algorithm is failing to find particles or finding
-    them and recovering too little of them -- which the single number cannot.
+    A truth particle can only reach the working point if the assignment gave it a cluster at
+    all, so `eff@wp = P(matched) x P(eff >= wp | matched)`. Panels 1 and 2 are those two
+    factors, and separating them is what distinguishes an algorithm that fails to find
+    particles from one that finds them and recovers too little of each -- the distinction the
+    headline figure cannot make, and the one that turns out to separate the two methods here.
+
+    Panel 3 is the same matching seen from the cluster side, which used to be a figure of its
+    own. It belongs here: it is the third outcome of the one operation, and any purity read
+    without it is silently conditioned on clusters that matched something.
+
+    The three panels deliberately count **different objects** -- two per particle, one per
+    cluster -- so each is annotated with which, and the axis labels name the object rather
+    than saying "fraction".
     """
-    fig, axes = plt.subplots(1, 3, figsize=(14.0, 3.9))
+    fig, axes = plt.subplots(1, 3, figsize=(10.4, 3.1))
 
     plot_binned(
         _by_algo(particles), "p_energy", "matched", diff.ENERGY_BINS,
         threshold=None, ax=axes[0],
-        xlabel="particle energy [GeV]", ylabel="fraction matched to any cluster",
+        xlabel="particle energy [GeV]", ylabel="particles given a cluster",
     )
     matched_only = {k: v[v["matched"]] for k, v in _by_algo(particles).items()}
     plot_binned(
         matched_only, "p_energy", "eff_e", diff.ENERGY_BINS,
         threshold=working_point, ax=axes[1],
         xlabel="particle energy [GeV]",
-        ylabel=f"fraction with eff $\\geq$ {working_point}, given matched",
+        ylabel=f"of those, $\\geq${working_point:g} recovered",
     )
-    plot_binned(
-        _by_algo(particles), "n_hits", "eff_e", diff.NHITS_BINS,
-        threshold=working_point, ax=axes[2],
-        xlabel="cells on the particle (exclusive truth)",
-        ylabel=f"fraction with energy efficiency $\\geq$ {working_point}",
-    )
-    axes[0].set_title("Ceiling: was it found at all?")
-    axes[1].set_title("Given found: how much recovered?")
-    axes[2].set_title("Efficiency vs particle size")
-    return _finish(fig, out)
-
-
-def fake_and_match_rates(particles, clusters, out=None):
-    """Fakes are the other half of purity, and a particle-level cut cannot select them.
-
-    Any purity restricted to clusters matched to a chosen set of particles silently omits
-    every unmatched cluster, so it must be read next to the fake rate.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(10.0, 3.9))
-
     plot_binned(
         _by_algo(clusters), "e_calib", "matched", diff.ENERGY_BINS,
-        threshold=None, ax=axes[0],
-        xlabel="cluster energy [GeV, calibrated]", ylabel="fraction of clusters matched",
+        threshold=None, ax=axes[2],
+        xlabel="cluster energy [GeV, calibrated]", ylabel="clusters matched to a particle",
     )
-    plot_binned(
-        _by_algo(particles), "dr_min", "matched", diff.DR_BINS,
-        threshold=None, ax=axes[1],
-        xlabel="$\\Delta R$ to nearest other target particle", ylabel="fraction matched to any cluster",
-    )
-    axes[0].set_title("Cluster match rate (1 - fake rate)")
-    axes[1].set_title("Particle match rate vs isolation")
+
+    style.panel_labels(axes)
+    style.clear_panel_legends(axes)
+    fig.tight_layout()
+    style.legend_below(fig)
     return _finish(fig, out)
 
 
-def multiowner_capability(soft_particles, working_point=0.5, out=None):
-    """The capability study: what the exclusive head-to-head is unable to show.
+def incidence_head_comparison(particles, clusters, working_point=0.5, out=None):
+    """The one figure where both readings of the model appear, and the only one that should.
 
-    The left panel is the whole argument. Particles owning no cell exclusively give a
-    partitioning algorithm no cell of its own to award them, so no cluster is ever about them
-    and its bar sits near zero as a property of the class rather than of its tuning. (Near,
-    not at: a cluster built around another particle can hold cells this one contributed to
-    sub-dominantly, which the soft metric credits.) Whatever a mask-based method reaches there
-    is capability the baseline does not have.
+    The model has two heads. The mask head scores each (query, cell) pair through an
+    independent sigmoid, so nothing in its loss relates one cell's claims to each other; the
+    incidence head applies a softmax over queries within a cell and is trained against the
+    true energy fractions. Which one resolves a contested cell is a choice made after
+    training, and it changes the owner of 98.5% of claimed cells.
 
-    The middle panel is the honest counterweight: soft efficiency against the particle's real
-    deposited energy, where an exclusive method is capped at its `exclusive_share` and the
-    model is capped by how well its mask probabilities divide a contested cell. The right
-    panel says which of those is binding, by comparing how often each side calls a cell shared
-    at all -- a method whose masks overlap far more than the truth does is dividing cells it
-    should not have divided, and pays for it in the middle panel.
+    Detection is the mask head's in both, so the two claim identical cells and differ only in
+    assignment -- which is what makes this a controlled comparison rather than two tunings.
+
+    Everywhere else in this repository "MaskFormer" means the mask head. Carrying both rows
+    through every figure made a single model read as two competing ones and crowded out the
+    comparison the thesis is actually about.
     """
-    fig, axes = plt.subplots(1, 3, figsize=(14.0, 3.9))
-    tables = _by_algo(soft_particles)
+    both = {"maskformer", "maskformer_incidence"}
+    fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.1))
 
-    names = list(tables)
-    positions = np.arange(len(names))
-
-    impossible = [t[t["no_exclusive_cell"]] for t in tables.values()]
-    recovered = [float((t["eff_e"] >= working_point).mean()) if len(t) else 0.0 for t in impossible]
-    axes[0].bar(positions, recovered, color=[style.colour(a) for a in names], width=0.6)
-    axes[0].set_xticks(positions)
-    axes[0].set_xticklabels([style.label(a) for a in names])
-    axes[0].set_ylabel(f"fraction recovered at eff $\\geq$ {working_point}")
-    axes[0].set_ylim(0.0, 1.05)
-    axes[0].set_title(f"Particles no partition can reach (n={len(impossible[0])})")
+    p_tables = {k: v for k, v in _by_algo(particles, references=False, both_heads=True).items() if k in both}
+    c_tables = {k: v for k, v in _by_algo(clusters, references=False, both_heads=True).items() if k in both}
 
     plot_binned(
-        tables, "p_energy", "eff_e", diff.ENERGY_BINS,
-        threshold=working_point, ax=axes[1],
+        p_tables, "p_energy", "eff_e", diff.ENERGY_BINS,
+        threshold=working_point, ax=axes[0],
         xlabel="particle energy [GeV]",
-        ylabel=f"fraction with soft eff $\\geq$ {working_point}",
+        ylabel=f"fraction of particles\n$\\geq${working_point:g} recovered",
     )
-    axes[1].set_title("Efficiency on multi-owner truth")
-
-    # exclusive_share is a property of the event, so one algorithm's copy is representative.
-    reference = next(iter(tables.values()))
     plot_binned(
-        {"exclusive ceiling": reference}, "p_energy", "exclusive_share", diff.ENERGY_BINS,
-        kind="median", ax=axes[2],
-        xlabel="particle energy [GeV]", ylabel="share of energy in dominated cells",
+        p_tables, "p_energy", "frag_frac", diff.ENERGY_BINS,
+        kind="median", band=False, ax=axes[1],
+        xlabel="particle energy [GeV]",
+        ylabel="energy outside the\nlargest cluster",
     )
-    axes[2].set_ylim(0.0, 1.05)
-    axes[2].set_title("Ceiling for any partitioning method")
+    axes[1].set_ylim(0.0, 1.05)
+    del c_tables
+
+    style.panel_labels(axes)
+    handles, _ = axes[0].get_legend_handles_labels()
+    style.clear_panel_legends(axes)
+    fig.tight_layout()
+    style.legend_below(fig, handles, ["mask head", "incidence head"])
     return _finish(fig, out)
 
 
@@ -493,6 +486,21 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
     mf = meta["maskformer"]
     layers = meta["detector"].get("layer_centres_m", {})
     calib = meta["detector"]["subsystem_calibration"]
+
+    # Which head resolved a contested cell is a decision the reader cannot infer from anything
+    # else in the paragraph, and before format 2 there was no choice to state. Silence here
+    # would now be ambiguous rather than merely brief.
+    heads = ""
+    if mf.get("has_incidence"):
+        heads = (
+            " The model has two prediction heads and results are reported for both. The mask head "
+            "scores each (query, cell) pair through an independent sigmoid; the incidence head "
+            "applies a softmax over queries within a cell and is trained against the true energy "
+            "fractions I_ia = E_ia / E_i. 'maskformer' resolves a contested cell to the query with "
+            "the highest mask probability, 'maskformer_incidence' to the query holding the largest "
+            "predicted share of that cell. Detection is the mask head's in both, so the two claim "
+            "identical cells and differ only in assignment."
+        )
 
     scoring = ""
     if metrics:
@@ -523,21 +531,25 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
         f"{', '.join(f'{k} {len(v)}' for k, v in layers.items())} layers. MaskFormer results use checkpoint "
         f"{str(mf['checkpoint']).rsplit('/', 1)[-1]} at mask threshold {mf['nominal_mask_threshold']} and object "
         f"threshold {mf['nominal_object_threshold']}; it was trained on events "
-        f"{mf['trained_event_window']}, disjoint from those reported here." + scoring
+        f"{mf['trained_event_window']}, disjoint from those reported here." + heads + scoring
     )
 
 
-def _by_algo(table: pd.DataFrame, references: bool = True) -> dict[str, pd.DataFrame]:
-    """Split a pooled table by algorithm, optionally dropping the reference clusterings.
+def _by_algo(table: pd.DataFrame, references: bool = True, both_heads: bool = False) -> dict[str, pd.DataFrame]:
+    """Split a long table into one frame per algorithm, in a fixed drawing order.
 
-    Panels that already carry several lines per algorithm drop them: a reference is context,
-    and context that doubles the line count stops being context.
+    `both_heads` is off by default, so `maskformer_incidence` is dropped unless a figure asks
+    for it. That default is the point: the incidence head is a second *reading* of one
+    checkpoint, and drawing it beside the mask head in every panel made one model look like
+    two competitors and pushed the CLUE comparison into third place. Exactly one figure,
+    :func:`incidence_head_comparison`, sets this.
     """
-    return {
-        str(algo): group
-        for algo, group in table.groupby("algo", observed=True)
-        if references or not style.is_reference(str(algo))
-    }
+    order = [a for a in style.ALGO_COLOURS if a in set(table["algo"].unique())]
+    if not both_heads:
+        order = [a for a in order if a != "maskformer_incidence"]
+    if not references:
+        order = [a for a in order if not style.is_reference(a)]
+    return {algo: table[table["algo"] == algo] for algo in order}
 
 
 def _finish(fig, out):
