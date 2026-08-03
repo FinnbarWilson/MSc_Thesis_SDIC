@@ -5,9 +5,17 @@ a label per cell and nothing else. That is what makes the head-to-head fair in a
 inspecting two configs cannot guarantee.
 
     python -m scripts.score --algo maskformer
+    python -m scripts.score --algo maskformer_incidence
     python -m scripts.score --algo clue --params results/clue_parameters.json
     python -m scripts.score --algo oracle_seeded
     python -m scripts.score --algo oracle_resolution
+
+`maskformer` and `maskformer_incidence` are the same checkpoint at the same working point,
+differing only in which head decides who owns a contested cell -- the mask head's per-(query,
+cell) sigmoid, or the incidence head's softmax over queries, the latter being the one trained
+against the true energy fractions. Detection comes from the mask head in both, so the two
+claim identical cells and the difference between their rows is the assignment rule alone.
+Score both; the comparison between them is a result, not a tuning choice.
 
 The two `oracle_*` algorithms are reference clusterings rather than methods under test; see
 src/evaluation/oracle.py for what each one is and how to read it. They come through this same
@@ -49,6 +57,23 @@ def maskformer_labels(record, cfg):
     )
 
 
+def maskformer_incidence_labels(record, cfg):
+    """The same model and the same detected cells, with ownership from the incidence head.
+
+    Scored as a separate algorithm rather than replacing `maskformer`, because the pair is
+    the result: both come through this scorer unchanged, so the difference between the two
+    rows isolates the assignment rule from everything else about the model.
+    """
+    mf = cfg["maskformer"]
+    return record.maskformer_incidence_labels(
+        mask_threshold=mf["mask_threshold"],
+        object_threshold=mf["object_threshold"],
+        min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
+        incidence_floor=mf.get("incidence_floor", 0.0),
+        restrict_to_mask=mf.get("incidence_restrict_to_mask", False),
+    )
+
+
 def clue_labels(record, cfg, params):
     return cluster_event(
         record,
@@ -63,7 +88,9 @@ def clue_labels(record, cfg, params):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--algo", choices=["maskformer", "clue", "oracle_geometric", "oracle_resolution"], required=True
+        "--algo",
+        choices=["maskformer", "maskformer_incidence", "clue", "oracle_geometric", "oracle_resolution"],
+        required=True,
     )
     parser.add_argument("--store", type=Path, default=None, help="defaults to dataset.<active>.store")
     parser.add_argument("--params", type=Path, default=None, help="tuned CLUE parameters as JSON")
@@ -93,6 +120,8 @@ def main() -> None:
             break
         if args.algo == "maskformer":
             label, n = maskformer_labels(record, cfg)
+        elif args.algo == "maskformer_incidence":
+            label, n = maskformer_incidence_labels(record, cfg)
         elif args.algo == "clue":
             label, n = clue_labels(record, cfg, params_by_subsystem)
         elif args.algo == "oracle_geometric":

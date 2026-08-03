@@ -32,7 +32,15 @@ scripts/                 command line entry points
 tests/                   scorer identity tests and the CLUE periodic-metric regression
 results/                 pooled parquet tables
 figures/                 generated figures
+model/                   the learned model: training config, the dump that writes an event
+                         store, and the trained weights. NOT imported by src/ -- see below
 ```
+
+Note the asymmetry between `src/clue/` and `model/`. CLUE is a module this repository imports
+and calls; the MaskFormer is not, because it needs `hepattn`, a GPU and the raw dataset. It
+lives outside `src/` so that `src/` keeps its defining property of importing nothing but numpy,
+scipy, pandas and matplotlib, and the two meet only at the event store. `model/README.md`
+covers what the model is, how it was trained, and which parts of it are mine.
 
 `src/evaluation/` never learns which method produced a clustering. It takes a label per cell
 plus the truth partition and returns numbers, so both pipelines are scored by identical code
@@ -80,7 +88,8 @@ All scripts run from the repository root as modules:
 
 ```bash
 python -m scripts.tune_clue                          # Optuna search, one study per subsystem
-python -m scripts.score --algo maskformer            # score the model
+python -m scripts.score --algo maskformer            # score the model, mask head
+python -m scripts.score --algo maskformer_incidence  # same model, incidence head; see Two heads
 python -m scripts.score --algo clue --params results/clue_parameters.json
 python -m scripts.score --algo oracle_geometric      # reference clusterings; see Metrics
 python -m scripts.score --algo oracle_resolution
@@ -91,6 +100,50 @@ python -m scripts.make_figures                       # every figure, from the ta
 
 `make_figures` is the only one an assessor needs; it touches no checkpoint and no dataset.
 
+## The figures
+
+Eight, each making one point. Styled with
+[scienceplots](https://github.com/garrettj403/SciencePlots) (`science` + `no-latex`, so no TeX
+installation is needed) on top of `src/plotting/style.py`.
+
+| Figure | The one thing it says |
+|---|---|
+| `eff_pur_vs_energy` | the head-to-head: efficiency and purity against energy |
+| `efficiency_decomposition` | *why* — found more particles, recovered less of each, fewer fakes |
+| `performance_vs_density` | the headroom is in isolated particles, not in jet cores |
+| `split_and_merge` | the failure mode: fragmentation above the geometric ceiling |
+| `energy_decomposition` | the two methods lose energy in different ways |
+| `incidence_head_comparison` | the two readings of the model, side by side |
+| `working_point_curve` | the efficiency/purity trade-off over each method's working points |
+| `weighting_comparison` | methods: counting cells reverses the splitting trend |
+
+Three conventions worth knowing.
+
+**"MaskFormer" means the mask head.** The incidence head is a second *reading* of the same
+checkpoint, not a second model, so it appears in exactly one figure. Carrying both rows
+through every panel made one model look like two competitors and pushed the CLUE comparison,
+which is what the thesis is about, into third place.
+
+**Colours come from scienceplots' own cycle**, with blue and yellow deliberately unused for
+the methods: they are the loudest members of it, and blue being the default first colour made
+the old figures read as "the blue one is the point". Violet and green carry the two methods,
+greys carry the references, and every method keeps its colour and its marker in every figure.
+
+**Panels are labelled (a), (b), (c), not titled.** The caption says what each panel shows, so
+the panel only has to be identifiable; a descriptive title duplicates the caption and, on a
+two-panel figure, is usually longer than the panel is wide.
+
+Four figures were removed rather than restyled:
+
+- `reference_ceiling` drew the same two panels as `eff_pur_vs_energy` against the same references.
+- `fake_and_match_rates` drew the cluster match rate — now panel (c) of `efficiency_decomposition` —
+  beside a particle match rate that was already panel (a) of it on a different x-axis.
+- `multiowner_capability` and `soft_threshold_scan` were each one number and one flat line
+  respectively: 0.56 of otherwise-unreachable particles recovered against CLUE's 0.007, and
+  "the over-division survives every threshold". Both are sentences, and both are in this
+  README and in `results/capability_summary.csv`. `scripts.score_soft` and
+  `scripts.scan_soft_threshold` still write their tables.
+
 ## The experiment definition
 
 `config/experiment.yaml` is the file to read first. Note the split in what it does. The cuts
@@ -99,6 +152,91 @@ applied once, by the dump, and travel inside the store as metadata. What the con
 the *expectations*, and `EventStore` refuses to open a store that disagrees with them. A
 config that has drifted fails loudly at load rather than quietly producing numbers for a
 different experiment.
+
+## Two heads, and which one owns a cell
+
+The model makes two predictions about every cell, and which one is read decides what the
+head-to-head measures. This is the single most consequential choice in the scoring code, so
+it is stated here rather than buried in the metrics section.
+
+The **mask head** emits an independent sigmoid per (query, cell). Nothing in its loss relates
+one cell's claims to each other, so its output is a detection score and *not* a share of a
+cell -- a fact with a measured consequence: normalising mask probabilities divides each cell
+2.04 ways against truth's 1.22, and that over-division survives every mask threshold up to
+0.95, so it is a calibration property rather than a working point.
+
+The **incidence head** applies a softmax over queries within a cell and is trained by KL
+divergence against `I_ia = E_ia / E_i`, the fraction of that cell's energy belonging to each
+particle. It is the head that was taught what a cell's division adds up to. Until the store
+format grew a version 2 it was computed on every forward pass and discarded, so every number
+reported before then resolved ownership with the quantity that was never supervised to do it.
+
+That gives four ways to turn one checkpoint into clusters, and the repository scores all of
+them through the same code:
+
+|                | mask head          | incidence head                 |
+|----------------|--------------------|--------------------------------|
+| **exclusive**  | `maskformer`       | `maskformer_incidence`         |
+| **fractional** | `scripts.score_soft` | `scripts.score_soft` (both rows) |
+
+Two things are worth being clear about, because the change invites a misreading.
+
+**Reading the incidence head is not a step towards hard borders.** The head-to-head already
+collapsed to an exclusive partition, and always had to: CLUE produces a partition and cannot
+express a shared cell, so a like-for-like comparison has to be run on something both methods
+can represent. Only the *rule* that does the collapsing changes, from "highest mask
+probability" to "largest predicted share". The soft study, where the fractional capability
+actually lives, gains a row scored with the calibrated quantity rather than losing anything.
+
+**Detection stays with the mask head in every variant.** The incidence softmax sums to one
+over queries for *every* cell, including the ~63% of hits belonging to no target particle, so
+on its own it could never decline anything and purity would collapse. The mask head decides
+whether a cell is claimed at all; the incidence head decides whose it is. Because detection is
+identical, `maskformer` and `maskformer_incidence` claim exactly the same cells -- asserted in
+`tests/test_incidence_labels.py` -- and the difference between their rows is the assignment
+rule and nothing else. That is what makes the pair a measurement rather than a tuning choice.
+
+### What it measured
+
+The two rules disagree about the owner of **98.5% of claimed cells**, so this is a real
+experiment rather than two names for one clustering. Exclusive head-to-head, 500 events:
+
+| | mask head | incidence head | CLUE |
+|---|---|---|---|
+| efficiency @0.5 | 0.341 | **0.350** | 0.315 |
+| purity @0.5 | 0.290 | **0.304** | 0.255 |
+| split rate (energy) | 0.420 | **0.364** | 0.300 |
+| fragmentation | 0.551 | **0.527** | 0.306 |
+| fake rate | 0.398 | **0.372** | 0.559 |
+| merge rate (energy) | **0.283** | 0.295 | 0.159 |
+
+The gain concentrates exactly where the mask head was weakest, which is the fragmentation
+story from the other direction: efficiency at E > 5 GeV goes 0.239 -> 0.277 against CLUE's
+0.297, and at E > 20 GeV 0.147 -> 0.173 against CLUE's 0.224. Roughly half the gap to CLUE in
+the energetic bins closes by changing nothing but which head is read. Below ~3 GeV the two are
+indistinguishable. It does not overturn the headline: CLUE still wins above 5 GeV.
+
+**The soft study went the other way, and that was not the prediction.** The expectation was
+that incidence shares, being trained against real energy fractions, would divide a contested
+cell better than mask probabilities. They divide it *worse*:
+
+| | mask head | incidence head | CLUE | truth |
+|---|---|---|---|---|
+| effective claims/cell | 2.02 | 4.15 | 1.00 | 1.16 |
+| soft efficiency @0.5 | 0.227 | 0.175 | 0.309 | |
+| soft purity @0.5 | 0.351 | 0.278 | 0.292 | |
+
+The incidence head spreads a cell over 4.15 queries effectively, against the mask head's 2.02
+and truth's 1.16. Its softmax is flatter than the mask head's sigmoid, not sharper. So the
+head is better at *ranking* which query owns a cell -- which is all the exclusive argmax needs
+-- and worse at saying *by how much*. Both are consistent with a model that has learned the
+ordering before the sharpness, which is what 20k optimiser steps would predict. Quote the
+exclusive gain and the soft loss together; taking either alone misrepresents the head.
+
+Read `eff_claims_per_cell`, not `claims_per_cell`, when comparing these. The raw count depends
+on how many claims a method happens to emit: the incidence head is stored as a fixed top-k, so
+its raw count is pinned near k (15.4 at k = 16) and reports the truncation rather than the
+model. The effective count is a perplexity over the normalised weights and is k-independent.
 
 ## Metrics
 
@@ -200,6 +338,20 @@ Read it with two things in mind:
   not about whether the architecture can represent shared cells -- it plainly can, which is
   what the recovery of otherwise-unreachable particles shows. Quote `sharing_diagnostics`
   alongside any soft efficiency.
+
+  **This was tested against the incidence head and the answer was no.** The model does have a
+  head trained to divide a cell -- see *Two heads* above -- so `scripts.score_soft` scores
+  both: `maskformer` with mask probabilities as the sharing weights, `maskformer_incidence`
+  with incidence shares. If the over-division were purely a matter of the mask head predicting
+  the wrong quantity, the supervised head should have divided better. It divides *worse*: 4.15
+  effective ways per cell against the mask head's 2.02 and truth's 1.16.
+  
+  So the over-division is not explained by which quantity is read. Both heads are too diffuse,
+  in the same direction, and the head trained on energy fractions is the more diffuse of the
+  two. That points at the model being undertrained rather than at the mask head's objective --
+  consistent with a validation loss still falling at the final checkpoint after only ~20k
+  optimiser steps. It does not rescue the mask head's calibration; it says the architecture
+  argument cannot be settled from this checkpoint, and the run length has to be fixed first.
 
 ### Caveats worth knowing before reading any number
 

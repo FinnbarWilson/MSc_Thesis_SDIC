@@ -53,8 +53,21 @@ def main() -> None:
         clue_params = {name: DEFAULT_CLUE_PARAMS for name in SUBSYSTEMS}
         print("  clue params  UNTUNED defaults")
 
-    frames: dict[str, list] = {"maskformer": [], "clue": []}
-    diagnostics: dict[str, list] = {"maskformer": [], "clue": []}
+    # The incidence head is the reason this study exists in the form it does, so it is scored
+    # here whenever the store carries it. `maskformer` divides a contested cell in proportion
+    # to MASK probabilities, which is the uncalibrated quantity: the measured symptom is that
+    # it splits each cell 2.04 ways against truth's 1.22, an over-division that survives every
+    # mask threshold up to 0.95 and therefore is not a working-point artefact. Incidence shares
+    # are trained against the true energy fractions, so `maskformer_incidence` asks the same
+    # capability question with the quantity that was supervised to answer it.
+    algos = ["maskformer", "clue"]
+    if store[0].has_incidence:
+        algos.insert(1, "maskformer_incidence")
+    else:
+        print("  ! store has no incidence head; skipping maskformer_incidence (re-dump to include it)")
+
+    frames: dict[str, list] = {name: [] for name in algos}
+    diagnostics: dict[str, list] = {name: [] for name in algos}
     for i, record in enumerate(store):
         if args.limit and i >= args.limit:
             break
@@ -68,7 +81,19 @@ def main() -> None:
             score_event_soft(record, cluster, cell, weight, n_soft, "maskformer",
                              min_overlap_frac=cfg["metrics"]["min_overlap_frac"])
         )
-        diagnostics["maskformer"].append(sharing_diagnostics(record, cell))
+        diagnostics["maskformer"].append(sharing_diagnostics(record, cell, weight))
+
+        if "maskformer_incidence" in frames:
+            i_cluster, i_cell, i_weight, n_inc = record.maskformer_incidence_soft_masks(
+                mask_threshold=cfg["maskformer"]["mask_threshold"],
+                object_threshold=cfg["maskformer"]["object_threshold"],
+                min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
+            )
+            frames["maskformer_incidence"].append(
+                score_event_soft(record, i_cluster, i_cell, i_weight, n_inc, "maskformer_incidence",
+                                 min_overlap_frac=cfg["metrics"]["min_overlap_frac"])
+            )
+            diagnostics["maskformer_incidence"].append(sharing_diagnostics(record, i_cell, i_weight))
 
         label, n_hard = cluster_event(
             record, clue_params, subsystems=tuple(cfg["detectors"]),
@@ -80,7 +105,7 @@ def main() -> None:
             score_event_soft(record, c_cluster, c_cell, c_weight, n_hard, "clue",
                              min_overlap_frac=cfg["metrics"]["min_overlap_frac"])
         )
-        diagnostics["clue"].append(sharing_diagnostics(record, c_cell))
+        diagnostics["clue"].append(sharing_diagnostics(record, c_cell, c_weight))
 
     args.out.mkdir(parents=True, exist_ok=True)
     tables = []

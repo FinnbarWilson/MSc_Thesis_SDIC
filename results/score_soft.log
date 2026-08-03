@@ -1,0 +1,7 @@
+500 events from /home/xucapfwi/eventstore_ep003/ttbar_pu0_20250_20750_v1
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/soft_particles_maskformer.parquet  (269059 rows, 20.8 MB)
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/soft_particles_clue.parquet  (269059 rows, 19.0 MB)
+
+      algo  n_particles  claims_per_cell  truth_owners_per_cell  eff_soft  eff_soft_mean  pur_soft  pur_soft_mean  match_rate  n_impossible  impossible_recovered  impossible_matched
+maskformer       269059            2.035                  1.217     0.227          0.334     0.351          0.395       0.835          1264                 0.560               0.917
+      clue       269059            1.000                  1.217     0.309          0.304     0.292          0.310       0.510          1264                 0.007               0.013

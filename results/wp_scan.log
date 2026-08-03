@@ -1,19 +1,19 @@
 scanning working points on 100 events
-  maskformer mask=0.1 obj=0.05: eff 0.342 pur 0.289
-  maskformer mask=0.1 obj=0.2: eff 0.343 pur 0.294
-  maskformer mask=0.1 obj=0.5: eff 0.315 pur 0.304
-  maskformer mask=0.2 obj=0.05: eff 0.333 pur 0.298
-  maskformer mask=0.2 obj=0.2: eff 0.333 pur 0.302
-  maskformer mask=0.2 obj=0.5: eff 0.304 pur 0.315
-  maskformer mask=0.3 obj=0.05: eff 0.328 pur 0.302
-  maskformer mask=0.3 obj=0.2: eff 0.328 pur 0.307
-  maskformer mask=0.3 obj=0.5: eff 0.299 pur 0.320
-  maskformer mask=0.5 obj=0.05: eff 0.319 pur 0.309
-  maskformer mask=0.5 obj=0.2: eff 0.319 pur 0.314
-  maskformer mask=0.5 obj=0.5: eff 0.288 pur 0.329
-  maskformer mask=0.7 obj=0.05: eff 0.309 pur 0.317
-  maskformer mask=0.7 obj=0.2: eff 0.309 pur 0.322
-  maskformer mask=0.7 obj=0.5: eff 0.278 pur 0.338
+  maskformer mask=0.1 obj=0.05: eff 0.368 pur 0.263
+  maskformer mask=0.1 obj=0.2: eff 0.369 pur 0.273
+  maskformer mask=0.1 obj=0.5: eff 0.297 pur 0.285
+  maskformer mask=0.2 obj=0.05: eff 0.357 pur 0.271
+  maskformer mask=0.2 obj=0.2: eff 0.357 pur 0.282
+  maskformer mask=0.2 obj=0.5: eff 0.286 pur 0.296
+  maskformer mask=0.3 obj=0.05: eff 0.351 pur 0.275
+  maskformer mask=0.3 obj=0.2: eff 0.351 pur 0.286
+  maskformer mask=0.3 obj=0.5: eff 0.279 pur 0.302
+  maskformer mask=0.5 obj=0.05: eff 0.341 pur 0.283
+  maskformer mask=0.5 obj=0.2: eff 0.341 pur 0.294
+  maskformer mask=0.5 obj=0.5: eff 0.268 pur 0.313
+  maskformer mask=0.7 obj=0.05: eff 0.331 pur 0.290
+  maskformer mask=0.7 obj=0.2: eff 0.330 pur 0.302
+  maskformer mask=0.7 obj=0.5: eff 0.257 pur 0.325
   clue rho_c x0.25: eff 0.365 pur 0.134
   clue rho_c x0.5: eff 0.348 pur 0.191
   clue rho_c x1.0: eff 0.315 pur 0.255
@@ -22,24 +22,24 @@ scanning working points on 100 events
 
 wrote /home/xucapfwi/MSc_Thesis_SDIC/results/wp_scan.parquet
       algo                knob  efficiency  purity  mean_eff  fake_rate  clusters_per_event
-maskformer mask 0.1 / obj 0.05       0.342   0.289     0.358      0.356             578.630
-maskformer  mask 0.1 / obj 0.2       0.343   0.294     0.358      0.345             566.920
-maskformer  mask 0.1 / obj 0.5       0.315   0.304     0.331      0.289             486.660
-maskformer mask 0.2 / obj 0.05       0.333   0.298     0.351      0.359             574.320
-maskformer  mask 0.2 / obj 0.2       0.333   0.302     0.350      0.348             562.950
-maskformer  mask 0.2 / obj 0.5       0.304   0.315     0.323      0.293             483.140
-maskformer mask 0.3 / obj 0.05       0.328   0.302     0.346      0.360             571.480
-maskformer  mask 0.3 / obj 0.2       0.328   0.307     0.346      0.349             560.300
-maskformer  mask 0.3 / obj 0.5       0.299   0.320     0.318      0.294             480.830
-maskformer mask 0.5 / obj 0.05       0.319   0.309     0.339      0.362             566.850
-maskformer  mask 0.5 / obj 0.2       0.319   0.314     0.339      0.351             556.010
-maskformer  mask 0.5 / obj 0.5       0.288   0.329     0.310      0.297             477.070
-maskformer mask 0.7 / obj 0.05       0.309   0.317     0.331      0.364             561.530
-maskformer  mask 0.7 / obj 0.2       0.309   0.322     0.330      0.353             551.030
-maskformer  mask 0.7 / obj 0.5       0.278   0.338     0.301      0.300             472.520
-      clue         rho_c x0.25       0.365   0.134     0.371      0.784            1697.950
-      clue          rho_c x0.5       0.348   0.191     0.349      0.678            1022.020
-      clue          rho_c x1.0       0.315   0.255     0.309      0.550             618.280
-      clue          rho_c x2.0       0.252   0.313     0.244      0.423             372.930
-      clue          rho_c x4.0       0.179   0.363     0.171      0.309             214.390
+maskformer mask 0.1 / obj 0.05       0.368   0.263     0.385      0.415             679.090
+maskformer  mask 0.1 / obj 0.2       0.369   0.273     0.384      0.385             640.730
+maskformer  mask 0.1 / obj 0.5       0.297   0.285     0.316      0.273             457.740
+maskformer mask 0.2 / obj 0.05       0.357   0.271     0.376      0.417             674.550
+maskformer  mask 0.2 / obj 0.2       0.357   0.282     0.375      0.387             636.420
+maskformer  mask 0.2 / obj 0.5       0.286   0.296     0.306      0.276             453.750
+maskformer mask 0.3 / obj 0.05       0.351   0.275     0.371      0.418             671.610
+maskformer  mask 0.3 / obj 0.2       0.351   0.286     0.370      0.389             633.610
+maskformer  mask 0.3 / obj 0.5       0.279   0.302     0.301      0.278             451.190
+maskformer mask 0.5 / obj 0.05       0.341   0.283     0.363      0.420             666.980
+maskformer  mask 0.5 / obj 0.2       0.341   0.294     0.362      0.391             629.240
+maskformer  mask 0.5 / obj 0.5       0.268   0.313     0.292      0.281             446.860
+maskformer mask 0.7 / obj 0.05       0.331   0.290     0.355      0.422             661.880
+maskformer  mask 0.7 / obj 0.2       0.330   0.302     0.353      0.393             624.290
+maskformer  mask 0.7 / obj 0.5       0.257   0.325     0.282      0.284             442.080
+      clue         rho_c x0.25       0.365   0.134     0.371      0.786            1697.950
+      clue          rho_c x0.5       0.348   0.191     0.349      0.680            1022.020
+      clue          rho_c x1.0       0.315   0.255     0.309      0.554             618.280
+      clue          rho_c x2.0       0.252   0.313     0.244      0.428             372.930
+      clue          rho_c x4.0       0.179   0.363     0.171      0.313             214.390
 wrote /home/xucapfwi/MSc_Thesis_SDIC/figures/working_point_curve.pdf / .png

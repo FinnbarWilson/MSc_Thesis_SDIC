@@ -43,14 +43,12 @@ never overlap, so nothing in this scan can move it.
 import argparse
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.config import FIGURES_DIR, RESULTS_DIR, settings, store_expectations, store_path
+from src.config import RESULTS_DIR, settings, store_expectations, store_path
 from src.evaluation.soft import score_event_soft, sharing_diagnostics
 from src.io.event_store import EventStore
-from src.plotting import style
 
 #: Runs from the store's own 0.02 floor up to a value tight enough to start losing real cells.
 #: The lower end is a hard limit rather than a choice -- masks below 0.02 were never written --
@@ -63,7 +61,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--events", type=int, default=200)
     parser.add_argument("--out", type=Path, default=RESULTS_DIR / "soft_threshold_scan.parquet")
-    parser.add_argument("--figure", type=Path, default=FIGURES_DIR / "soft_threshold_scan")
     args = parser.parse_args()
 
     cfg = settings()
@@ -86,7 +83,7 @@ def main() -> None:
                 score_event_soft(record, cluster, cell, weight, n, "maskformer",
                                  min_overlap_frac=cfg["metrics"]["min_overlap_frac"])
             )
-            diagnostics.append(sharing_diagnostics(record, cell))
+            diagnostics.append(sharing_diagnostics(record, cell, weight))
             cluster_counts.append(n)
 
         table = pd.concat(tables, ignore_index=True)
@@ -125,52 +122,11 @@ def main() -> None:
     print(f"truth shares {scan['truth_owners_per_cell'].iloc[0]:.2f} owners per cell; the "
           f"threshold matching that is where over-claiming stops")
 
-    style.apply()
-    _draw(scan, wp, args.figure)
-
-
-def _draw(scan: pd.DataFrame, working_point: float, stem: Path) -> None:
-    """Three panels: what the threshold costs, what it buys, and why."""
-    fig, axes = plt.subplots(1, 3, figsize=(14.0, 3.9))
-    colour = style.colour("maskformer")
-    nominal = scan[scan["nominal"]]
-
-    axes[0].plot(scan["mask_threshold"], scan["eff_soft_mean"], color=colour, marker="o", label="mean")
-    axes[0].plot(scan["mask_threshold"], scan["eff_soft"], color=colour, marker="s",
-                 linestyle="--", alpha=0.7, label=f"fraction $\\geq$ {working_point}")
-    axes[0].set_ylabel("soft energy efficiency")
-    axes[0].set_title("Efficiency against mask threshold")
-
-    axes[1].plot(scan["mask_threshold"], scan["pur_soft_mean"], color=colour, marker="o", label="mean")
-    axes[1].plot(scan["mask_threshold"], scan["pur_soft"], color=colour, marker="s",
-                 linestyle="--", alpha=0.7, label=f"fraction $\\geq$ {working_point}")
-    axes[1].set_ylabel("soft energy purity")
-    axes[1].set_title("Purity against mask threshold")
-
-    # The diagnostic panel: the threshold's real job here is setting how often a cell is
-    # divided, and the truth line is the value it would have to reach to stop over-claiming.
-    axes[2].plot(scan["mask_threshold"], scan["claims_per_cell"], color=colour, marker="o", label="MaskFormer")
-    axes[2].axhline(
-        scan["truth_owners_per_cell"].iloc[0], color="#555555", linestyle=":",
-        label=f"truth ({scan['truth_owners_per_cell'].iloc[0]:.2f})",
-    )
-    axes[2].set_ylabel("claims per claimed cell")
-    axes[2].set_title("How often a cell is divided")
-
-    for ax in axes:
-        ax.set_xlabel("mask threshold")
-        if len(nominal):
-            ax.axvline(float(nominal["mask_threshold"].iloc[0]), color="#999999", linewidth=0.9, alpha=0.6)
-        ax.legend()
-    axes[0].set_ylim(0.0, 1.05)
-    axes[1].set_ylim(0.0, 1.05)
-
-    fig.tight_layout()
-    stem.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in ("pdf", "png"):
-        fig.savefig(stem.with_suffix(f".{suffix}"))
-    plt.close(fig)
-    print(f"wrote {stem}.pdf / .png")
+    # No figure. The scan's result is that the curves are FLAT -- efficiency falls
+    # monotonically from 0.365 to 0.313 across the whole threshold range and the cell division
+    # never approaches truth's 1.22 -- so the finding is "this is not a working point problem",
+    # which is a sentence. Three panels of nearly horizontal lines said it at much greater
+    # length. The scanned table is still written, and the numbers are quoted in the README.
 
 
 if __name__ == "__main__":

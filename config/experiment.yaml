@@ -23,7 +23,11 @@
 dataset:
   active: pu0            # pu0 | pu200
   pu0:
-    store: /home/xucapfwi/eventstore/ttbar_pu0_20250_20750_v1
+    # Format 2, which carries the incidence head as well as the masks. The v1 store beside it
+    # is the same checkpoint and the same events and still scores identically for `maskformer`,
+    # but `maskformer_incidence` cannot be derived from it -- the head was computed on every
+    # forward pass and thrown away.
+    store: /home/xucapfwi/eventstore_ep003_v2/ttbar_pu0_20250_20750_v2
     tune_store: /home/xucapfwi/eventstore/ttbar_pu0_20000_20050_v1
   pu200:
     store: ""            # set when the pileup-200 sample is available
@@ -248,9 +252,26 @@ clue:
 # so any working point at or above that can be re-derived offline, without a GPU
 # -- which is what lets the comparison be shown as a curve rather than a single
 # point that depends on one tuning choice.
+#
+# The model has TWO prediction heads and which one resolves a contested cell is a physics
+# choice, not a detail. The mask head scores each (query, cell) pair through an independent
+# sigmoid, so nothing in its loss relates one cell's claims to each other -- it is a
+# detection score. The incidence head softmaxes over queries within a cell and is trained by
+# KL divergence against I_ia = E_ia / E_i, so its output IS a share of that cell's energy.
+# Until store format 2 only the mask head was written out, so every number reported before
+# then resolved ownership with the quantity that was never trained to divide a cell.
+#
+# `incidence_floor` is a working point on the winning share: 0 assigns every detected cell,
+# which is the setting comparable to CLUE, while a positive value declines cells nobody
+# clearly owns. `incidence_restrict_to_mask` is a CONTROL, not a working point -- it forces
+# the winner to be a query whose mask also claims the cell, which separates "assigns detected
+# cells better" from "reaches cells the mask head gave to nobody".
 maskformer:
-  checkpoint: /home/xucapfwi/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260728-T223643/ckpts/epoch=027-val_loss=18.26303.ckpt
+  checkpoint: /home/xucapfwi/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260802-T234016/ckpts/epoch=003-val_loss=18.06191.ckpt
   mask_threshold: 0.5
   object_threshold: 0.2
   mask_scan: [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
   object_scan: [0.05, 0.1, 0.2, 0.3, 0.5]
+  incidence_floor: 0.0
+  incidence_restrict_to_mask: false
+  incidence_floor_scan: [0.0, 0.1, 0.2, 0.3, 0.5]
