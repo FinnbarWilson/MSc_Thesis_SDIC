@@ -1,156 +1,187 @@
 """Matching predicted clusters to truth particles.
 
-Nothing in this module knows which method produced a clustering. It takes a
-label per cell and the event's truth record, and returns the correspondence
-between clusters and particles that the metrics are computed from. Both the CLUE
-baseline and the MaskFormer are scored through it, which is what guarantees the
-two are measured the same way.
+Nothing in this module knows which method produced a clustering. It takes a label per cell
+and the event's truth partition, and returns the correspondence the metrics are computed
+from. Both CLUE and the MaskFormer are scored through it, which is what guarantees the two
+are measured the same way.
 
-A cluster is matched to the particle that contributed the most energy to it.
+The matching is a **global one-to-one assignment**, solved with
+``scipy.optimize.linear_sum_assignment``. That choice is not incidental:
+
+*   The metric the model logs during training is not reusable. It compares query *i* with
+    target *i*, which is only meaningful because the training loss has already Hungarian-
+    permuted the two onto each other. CLUE has no such permutation, so that metric cannot be
+    applied to both and a separate, model-agnostic matcher is required.
+*   A greedy "assign each cluster to whichever particle contributed most of its energy"
+    is not the same thing and is not symmetric. It lets one particle win several clusters
+    while another wins none, and a particle merged into a neighbour simply vanishes from the
+    denominator instead of counting as a miss.
+
+The assignment is rectangular by construction -- there are ~620 truth particles per event
+against ~570-720 MaskFormer clusters and whatever CLUE produces -- so it yields
+``min(n_truth, n_pred)`` pairs. Truth particles left over are inefficiencies; predicted
+clusters left over are fakes. Both are returned, because reporting only the matched pairs
+would score each method on the subset of the event it happened to do well on.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
-import pandas as pd
-
-from src.data.loader import ENERGY_COLUMN
-
-CLUSTER_COLUMNS = [
-    "cluster_id", "matched_pid", "matched_energy", "cluster_energy",
-    "particle_energy", "purity", "efficiency",
-]
+from scipy.optimize import linear_sum_assignment
 
 
-def cluster_matches(event, cluster_ids, hit_mask=None):
-    """Match every predicted cluster to its dominant truth particle.
+@dataclass(frozen=True)
+class MatchResult:
+    """A one-to-one assignment between truth particles and predicted clusters."""
 
-    Args:
-        event: one event row.
-        cluster_ids: label per cell, -1 for unclustered.
-        hit_mask: optional boolean mask over cells. Both the purity numerator and
-            the efficiency denominator are restricted to the masked cells, so the
-            result is local to one detector collection.
+    truth_index: np.ndarray
+    pred_index: np.ndarray
+    overlap: np.ndarray
+    unmatched_truth: np.ndarray
+    unmatched_pred: np.ndarray
 
-    Returns:
-        pd.DataFrame, one row per cluster, with ``purity`` (fraction of the
-        cluster's energy belonging to its matched particle) and ``efficiency``
-        (fraction of that particle's energy captured by this cluster).
-    """
-    frame = pd.DataFrame({
-        "energy": event[ENERGY_COLUMN],
-        "pids": list(event["contrib_particle_ids"]),
-        "pes": list(event["contrib_energies"]),
-        "cluster_id": np.asarray(cluster_ids),
-    })
-    if hit_mask is not None:
-        frame = frame[np.asarray(hit_mask)].reset_index(drop=True)
-
-    if frame.empty or not (frame["cluster_id"] != -1).any():
-        return pd.DataFrame(columns=CLUSTER_COLUMNS)
-
-    exploded = frame.explode(["pids", "pes"])
-    exploded["pes"] = exploded["pes"].astype(float)
-    exploded["pids"] = exploded["pids"].astype(np.int64)
-    clustered = exploded[exploded["cluster_id"] != -1]
-
-    per_pair = clustered.groupby(["cluster_id", "pids"], as_index=False)["pes"].sum()
-    per_pair = per_pair.sort_values(["cluster_id", "pes"], ascending=[True, False])
-    dominant = per_pair.drop_duplicates("cluster_id").rename(
-        columns={"pids": "matched_pid", "pes": "matched_energy"}
-    )
-
-    cluster_energy = frame[frame["cluster_id"] != -1].groupby(
-        "cluster_id", as_index=False
-    )["energy"].sum().rename(columns={"energy": "cluster_energy"})
-
-    particle_energy = exploded.groupby("pids", as_index=False)["pes"].sum().rename(
-        columns={"pids": "matched_pid", "pes": "particle_energy"}
-    )
-
-    rows = dominant.merge(cluster_energy, on="cluster_id")
-    rows = rows.merge(particle_energy, on="matched_pid")
-    rows["purity"] = rows["matched_energy"] / rows["cluster_energy"]
-    rows["efficiency"] = rows["matched_energy"] / rows["particle_energy"]
-    return rows[CLUSTER_COLUMNS]
+    @property
+    def n_matched(self) -> int:
+        return int(self.truth_index.size)
 
 
-def particle_matches(matches, targets):
-    """Score every reconstructable particle, including those no cluster claimed.
-
-    Working from the cluster side alone hides failures: a particle merged into a
-    neighbour's cluster dominates nothing and simply disappears from the
-    denominator instead of counting as a miss. Starting from the target list
-    instead asks, of every particle that should have been reconstructed, how much
-    of it ended up in one cluster of its own.
-
-    A particle split across several clusters is credited only with its largest
-    piece, so fragmentation costs efficiency.
+def overlap_matrix(
+    truth_label: np.ndarray,
+    pred_label: np.ndarray,
+    weight: np.ndarray | None,
+    n_truth: int,
+    n_pred: int,
+) -> np.ndarray:
+    """Weight shared between every (truth particle, predicted cluster) pair.
 
     Args:
-        matches: output of :func:`cluster_matches`.
-        targets: reconstructable particles, needing ``pid`` and
-            ``deposited_energy``.
+        truth_label: per cell, the owning particle's index, -1 where no target owns it.
+        pred_label: per cell, the predicted cluster index, -1 where unclustered.
+        weight: per cell weight to accumulate. ``None`` counts cells, which gives the
+            hit-based metrics; pass the particle's own calibrated deposit for the
+            energy-weighted ones.
+        n_truth: number of truth particles.
+        n_pred: number of predicted clusters.
 
     Returns:
-        pd.DataFrame, one row per target particle, with ``n_clusters`` (how many
-        clusters it dominates), ``recovered_energy`` and ``efficiency``.
+        ``(n_truth, n_pred)`` float64 array. Cells owned by nobody, or claimed by nobody,
+        contribute to no pair -- but they still count towards the row and column totals the
+        caller divides by, which is how unclustered energy costs efficiency and how
+        sub-threshold deposits cost purity.
     """
-    out = targets[["pid", "deposited_energy"]].copy()
-    out["pid"] = out["pid"].astype(np.int64)
+    if n_truth == 0 or n_pred == 0:
+        return np.zeros((n_truth, n_pred), dtype=np.float64)
 
-    if matches.empty or out.empty:
-        out["n_clusters"] = 0
-        out["recovered_energy"] = 0.0
-        out["efficiency"] = 0.0
-        return out
+    both = (truth_label >= 0) & (pred_label >= 0)
+    if not both.any():
+        return np.zeros((n_truth, n_pred), dtype=np.float64)
 
-    grouped = matches.groupby(matches["matched_pid"].astype(np.int64)).agg(
-        n_clusters=("cluster_id", "size"),
-        recovered_energy=("matched_energy", "max"),
+    flat = truth_label[both].astype(np.int64) * n_pred + pred_label[both].astype(np.int64)
+    values = None if weight is None else np.asarray(weight, dtype=np.float64)[both]
+    counts = np.bincount(flat, weights=values, minlength=n_truth * n_pred)
+    return counts.reshape(n_truth, n_pred)
+
+
+def hungarian_match(
+    overlap: np.ndarray,
+    min_overlap: float = 0.0,
+    truth_total: np.ndarray | None = None,
+    pred_total: np.ndarray | None = None,
+    min_overlap_frac: float = 0.0,
+) -> MatchResult:
+    """Assign truth particles to predicted clusters, maximising total shared weight.
+
+    Args:
+        overlap: ``(n_truth, n_pred)`` from :func:`overlap_matrix`.
+        min_overlap: pairs at or below this are discarded and their members reported as
+            unmatched. The default of 0 matters: a global optimum will otherwise pair a
+            truth particle with a completely disjoint cluster purely to fill out the
+            assignment, inventing a match that shares no cells at all.
+        truth_total, pred_total: row and column totals, required only when
+            `min_overlap_frac` is non-zero.
+        min_overlap_frac: a *relative* floor, which is the one with teeth. A pair survives
+            only if it shares at least this fraction of ``min(truth total, cluster total)``.
+
+            An absolute floor of 0 admits a match on a single 1 MeV cell, which makes the
+            match rate and its complement the fake rate nearly vacuous: an energetic cluster
+            in a busy event is almost certain to graze *some* particle. Taking the minimum of
+            the two totals keeps the test symmetric -- a small cluster sitting wholly inside a
+            large particle still matches, while a large cluster brushing a small particle does
+            not.
+
+    Returns:
+        A :class:`MatchResult`.
+    """
+    n_truth, n_pred = overlap.shape
+    if n_truth == 0 or n_pred == 0:
+        return MatchResult(
+            truth_index=np.empty(0, dtype=np.int64),
+            pred_index=np.empty(0, dtype=np.int64),
+            overlap=np.empty(0, dtype=np.float64),
+            unmatched_truth=np.arange(n_truth),
+            unmatched_pred=np.arange(n_pred),
+        )
+
+    rows, cols = linear_sum_assignment(overlap, maximize=True)
+    values = overlap[rows, cols]
+    keep = values > min_overlap
+
+    if min_overlap_frac > 0.0:
+        if truth_total is None or pred_total is None:
+            msg = "min_overlap_frac requires both truth_total and pred_total"
+            raise ValueError(msg)
+        floor = min_overlap_frac * np.minimum(
+            np.asarray(truth_total, dtype=np.float64)[rows],
+            np.asarray(pred_total, dtype=np.float64)[cols],
+        )
+        keep &= values >= floor
+
+    matched_truth = rows[keep]
+    matched_pred = cols[keep]
+    return MatchResult(
+        truth_index=matched_truth,
+        pred_index=matched_pred,
+        overlap=values[keep],
+        unmatched_truth=np.setdiff1d(np.arange(n_truth), matched_truth, assume_unique=False),
+        unmatched_pred=np.setdiff1d(np.arange(n_pred), matched_pred, assume_unique=False),
     )
-    out = out.merge(grouped, left_on="pid", right_index=True, how="left")
-    out["n_clusters"] = out["n_clusters"].fillna(0).astype(int)
-    out["recovered_energy"] = out["recovered_energy"].fillna(0.0)
-    out["efficiency"] = out["recovered_energy"] / out["deposited_energy"].replace(0, np.nan)
-    return out
 
 
-def energy_breakdown(event, cluster_ids, matches, hit_mask=None):
-    """Split each matched particle's energy into recovered, discarded and misplaced.
+def fragmentation(overlap: np.ndarray, truth_total: np.ndarray, fraction: float = 0.10) -> np.ndarray:
+    """Per truth particle, how many clusters hold at least `fraction` of it.
 
-    Separates the two ways a particle loses energy: cells the algorithm called
-    noise, and cells it gave to a different cluster. The first is governed by the
-    density threshold and the second by genuine mis-clustering, so keeping them
-    apart says which one is limiting performance.
+    More than one means the particle was **split**. Counted from the same overlap matrix
+    that drove the matching, so the split rate cannot drift away from the efficiency.
 
-    Returns:
-        pd.DataFrame: ``matches`` with ``energy_recovered``, ``energy_discarded``
-        and ``energy_misplaced`` columns added.
+    The weighting is the caller's choice and on splitting it is decisive. Pass ``overlap_n`` /
+    ``truth_total_n`` for the brief's hit-counted definition; pass the energy pair for the one
+    consistent with every other primary metric here. Measured, the two disagree on the *sign*
+    of MaskFormer's trend above ~8 GeV: hit-counted splitting falls with particle energy while
+    energy-weighted splitting rises. The blind spot below is why -- it bites hardest on the
+    most fragmented particles, which are the energetic ones. Both are computed in
+    :func:`~src.evaluation.metrics.score_event`.
     """
-    out = matches.copy()
-    if out.empty:
-        for column in ("energy_recovered", "energy_discarded", "energy_misplaced"):
-            out[column] = pd.Series(dtype=float)
-        return out
+    if overlap.size == 0:
+        return np.zeros(overlap.shape[0], dtype=np.int32)
+    threshold = fraction * np.asarray(truth_total, dtype=np.float64)[:, None]
+    return (overlap >= np.maximum(threshold, np.finfo(np.float64).tiny)).sum(axis=1).astype(np.int32)
 
-    frame = pd.DataFrame({
-        "pids": list(event["contrib_particle_ids"]),
-        "pes": list(event["contrib_energies"]),
-        "cluster_id": np.asarray(cluster_ids),
-    })
-    if hit_mask is not None:
-        frame = frame[np.asarray(hit_mask)].reset_index(drop=True)
 
-    noise = frame[frame["cluster_id"] == -1]
-    if noise.empty:
-        discarded = pd.Series(dtype=float)
-    else:
-        exploded = noise.explode(["pids", "pes"])
-        exploded["pes"] = exploded["pes"].astype(float)
-        discarded = exploded.groupby("pids")["pes"].sum()
+def contamination(overlap: np.ndarray, truth_total: np.ndarray, fraction: float = 0.10) -> np.ndarray:
+    """Per predicted cluster, how many truth particles put at least `fraction` of themselves in it.
 
-    out["energy_recovered"] = out["matched_energy"]
-    out["energy_discarded"] = out["matched_pid"].map(discarded).fillna(0.0)
-    out["energy_misplaced"] = (
-        out["particle_energy"] - out["energy_recovered"] - out["energy_discarded"]
-    ).clip(lower=0.0)
-    return out
+    More than one means the cluster **merged** several particles. Note the threshold is a
+    fraction of each *truth particle's* total, not of the cluster's, following the brief:
+    a cluster that swallows a large particle whole and also picks up a tenth of a small
+    neighbour has merged them, regardless of how the cluster's own energy divides.
+
+    As with :func:`fragmentation` the weighting is the caller's, though here it turns out to
+    matter little: CLUE's merge rate is the same under both, and MaskFormer's is somewhat
+    *higher* under energy weighting rather than lower. The energy form is still the one to
+    report, for consistency with every other primary metric rather than because it rescues
+    the number.
+    """
+    if overlap.size == 0:
+        return np.zeros(overlap.shape[1], dtype=np.int32)
+    threshold = fraction * np.asarray(truth_total, dtype=np.float64)[:, None]
+    return (overlap >= np.maximum(threshold, np.finfo(np.float64).tiny)).sum(axis=0).astype(np.int32)
