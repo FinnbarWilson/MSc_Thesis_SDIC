@@ -5,6 +5,11 @@ ColliderML file -- only the parquet tables written by ``scripts.score``, which a
 enough to sit beside the thesis.
 
     python -m scripts.make_figures --tags maskformer clue
+
+It reads ``results/<active dataset>/`` and writes ``figures/<active dataset>/``, so the
+pileup condition of a figure is fixed by the same switch that produced its tables. There is
+no mode that draws pu0 and pu200 onto one axis: they are different experiments with different
+denominators, and a panel mixing them would look exactly like a result.
 """
 
 import argparse
@@ -13,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.config import FIGURES_DIR, RESULTS_DIR, settings, store_path
+from src.config import describe, figures_dir, results_dir, settings, store_path
 from src.evaluation.differential import reference_table
 from src.plotting import figures, style
 
@@ -34,8 +39,8 @@ def main() -> None:
         default=["maskformer", "maskformer_incidence", "clue", "oracle_geometric", "oracle_resolution"],
         help="table suffixes to load; missing ones are skipped with a warning",
     )
-    parser.add_argument("--results", type=Path, default=RESULTS_DIR)
-    parser.add_argument("--out", type=Path, default=FIGURES_DIR)
+    parser.add_argument("--results", type=Path, default=None, help="defaults to results/<active dataset>/")
+    parser.add_argument("--out", type=Path, default=None, help="defaults to figures/<active dataset>/")
     parser.add_argument("--formats", nargs="+", default=["pdf", "png"], help="output formats")
     parser.add_argument(
         "--meta",
@@ -45,17 +50,28 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    results = args.results or results_dir()
+    out = args.out or figures_dir()
+
     style.apply()
-    args.out.mkdir(parents=True, exist_ok=True)
+    print(describe())
+    out.mkdir(parents=True, exist_ok=True)
 
     # The reference clusterings are optional: the thesis figures are still meaningful without
     # them, they are just far harder to read, so a missing one is a warning and not a stop.
-    available = [t for t in args.tags if (args.results / f"particles_{t}.parquet").exists()]
+    available = [t for t in args.tags if (results / f"particles_{t}.parquet").exists()]
     for missing in [t for t in args.tags if t not in available]:
         print(f"  ! no tables for {missing!r}; run  python -m scripts.score --algo {missing}")
+    if not available:
+        msg = (
+            f"no particle tables in {results}. Score something first "
+            f"(python -m scripts.score --algo maskformer), or point --results at another "
+            f"dataset's directory."
+        )
+        raise SystemExit(msg)
 
-    particles = pd.concat([pd.read_parquet(args.results / f"particles_{t}.parquet") for t in available], ignore_index=True)
-    clusters = pd.concat([pd.read_parquet(args.results / f"clusters_{t}.parquet") for t in available], ignore_index=True)
+    particles = pd.concat([pd.read_parquet(results / f"particles_{t}.parquet") for t in available], ignore_index=True)
+    clusters = pd.concat([pd.read_parquet(results / f"clusters_{t}.parquet") for t in available], ignore_index=True)
     print(f"{len(particles)} particle rows, {len(clusters)} cluster rows, algorithms {sorted(particles['algo'].unique())}")
 
     working_point = settings()["metrics"]["working_points"][0]
@@ -84,11 +100,11 @@ def main() -> None:
     # the fonts, so the figures survive being dropped into LaTeX at any scale.
     for name, draw in panels.items():
         for suffix in args.formats:
-            draw(args.out / f"{name}.{suffix}")
-    print(f"wrote {len(panels)} figures to {args.out} as {', '.join(args.formats)}")
+            draw(out / f"{name}.{suffix}")
+    print(f"wrote {len(panels)} figures to {out} as {', '.join(args.formats)}")
 
     table = reference_table(particles, clusters, REFERENCE_CUTS, working_point)
-    table.to_csv(args.results / "reference_table.csv", index=False)
+    table.to_csv(results / "reference_table.csv", index=False)
     print("\n" + table.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
 
     # The definitions paragraph is deliverable 7 and is generated from the store's metadata so
@@ -98,7 +114,18 @@ def main() -> None:
     # nothing complained. Defaulting to the active store removes the chance to get it wrong,
     # and the check below catches the remaining case where the config has moved on from the
     # store without it being re-dumped.
-    meta_path = args.meta or (store_path() / "meta.json")
+    #
+    # `store_path` raises when the active dataset has no store configured, which is the normal
+    # state for a dataset whose tables were produced elsewhere and copied in. That is a reason
+    # to skip the paragraph, not to fail after the figures have already been written.
+    meta_path = args.meta
+    if meta_path is None:
+        try:
+            meta_path = store_path() / "meta.json"
+        except ValueError as exc:
+            print(f"\n  ! {exc}\n    definitions.txt not regenerated; pass --meta to point at a store.")
+            return
+
     if meta_path.exists():
         meta = json.loads(meta_path.read_text())
         cfg = settings()
@@ -114,7 +141,7 @@ def main() -> None:
             )
 
         paragraph = figures.definitions_paragraph(meta, cfg["metrics"])
-        (args.results / "definitions.txt").write_text(paragraph + "\n")
+        (results / "definitions.txt").write_text(paragraph + "\n")
         print("\n" + paragraph)
     else:
         print(f"\n  ! no store metadata at {meta_path}; definitions.txt not regenerated")

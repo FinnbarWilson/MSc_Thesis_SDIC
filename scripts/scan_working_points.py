@@ -24,13 +24,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from src.clue.pipeline import SUBSYSTEMS, cluster_event
-from src.config import FIGURES_DIR, RESULTS_DIR, settings, store_expectations, store_path
+from src.config import describe, figures_dir, results_dir, settings, store_expectations, store_path
 from src.evaluation.metrics import score_event
 from src.io.event_store import EventStore
 from src.plotting import figures, style
 
-MASK_SCAN = (0.1, 0.2, 0.3, 0.5, 0.7)
-OBJECT_SCAN = (0.05, 0.2, 0.5)
+#: CLUE's density threshold is scanned as a MULTIPLE of its tuned value rather than over an
+#: absolute grid, so the scan follows the tuning instead of having to be re-chosen with it --
+#: which matters at pu200, where the tuned `rho_c` is expected to land somewhere else entirely.
+#: The MaskFormer grids are `maskformer.mask_scan` / `object_scan` in config/experiment.yaml,
+#: read from there rather than restated here: they were duplicated once, drifted, and the scan
+#: silently reported a different grid from the one the config documents.
 RHO_SCALES = (0.25, 0.5, 1.0, 2.0, 4.0)
 
 
@@ -51,13 +55,24 @@ def summarise(particles, clusters, algo, wp, **extra) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--events", type=int, default=100)
-    parser.add_argument("--params", type=Path, default=RESULTS_DIR / "clue_parameters.json")
-    parser.add_argument("--out", type=Path, default=RESULTS_DIR / "wp_scan.parquet")
-    parser.add_argument("--figure", type=Path, default=FIGURES_DIR / "working_point_curve")
+    parser.add_argument("--params", type=Path, default=None,
+                        help="defaults to results/<active dataset>/clue_parameters.json")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="defaults to results/<active dataset>/wp_scan.parquet")
+    parser.add_argument("--figure", type=Path, default=None,
+                        help="defaults to figures/<active dataset>/working_point_curve")
     args = parser.parse_args()
 
     cfg = settings()
+    results = results_dir()
+    params_path = args.params or (results / "clue_parameters.json")
+    out_path = args.out or (results / "wp_scan.parquet")
+    figure_path = args.figure or (figures_dir() / "working_point_curve")
+    print(describe())
+
     wp = cfg["metrics"]["working_points"][0]
+    mask_scan = cfg["maskformer"]["mask_scan"]
+    object_scan = cfg["maskformer"]["object_scan"]
     store = EventStore(store_path(), expect=store_expectations())
     records = [store[i] for i in range(min(args.events, len(store)))]
     print(f"scanning working points on {len(records)} events")
@@ -66,8 +81,8 @@ def main() -> None:
 
     nominal_mask = cfg["maskformer"]["mask_threshold"]
     nominal_object = cfg["maskformer"]["object_threshold"]
-    for mask_t in MASK_SCAN:
-        for object_t in OBJECT_SCAN:
+    for mask_t in mask_scan:
+        for object_t in object_scan:
             p, c = [], []
             for record in records:
                 label, n = record.maskformer_labels(mask_t, object_t, cfg["metrics"]["min_cluster_hits"])
@@ -91,7 +106,7 @@ def main() -> None:
             )
             print(f"  maskformer mask={mask_t} obj={object_t}: eff {rows[-1]['efficiency']:.3f} pur {rows[-1]['purity']:.3f}", flush=True)
 
-    tuned = json.loads(args.params.read_text())["subsystems"]
+    tuned = json.loads(params_path.read_text())["subsystems"]
     for scale in RHO_SCALES:
         params = {
             name: {**entry["parameters"], "rho_c_2d": entry["parameters"]["rho_c_2d"] * scale, "rho_c_3d": entry["parameters"]["rho_c_3d"] * scale}
@@ -123,9 +138,9 @@ def main() -> None:
         print(f"  clue rho_c x{scale}: eff {rows[-1]['efficiency']:.3f} pur {rows[-1]['purity']:.3f}", flush=True)
 
     scan = pd.DataFrame(rows)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    scan.to_parquet(args.out, index=False)
-    print(f"\nwrote {args.out}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    scan.to_parquet(out_path, index=False)
+    print(f"\nwrote {out_path}")
     print(scan[["algo", "knob", "efficiency", "purity", "mean_eff", "fake_rate", "clusters_per_event"]].to_string(index=False, float_format=lambda v: f"{v:.3f}"))
 
     # Mark where the reachable corner is, if the reference clusterings have been scored. A
@@ -133,8 +148,8 @@ def main() -> None:
     # available to any algorithm.
     reference = {}
     for name in ("oracle_geometric", "oracle_resolution"):
-        p_path = RESULTS_DIR / f"particles_{name}.parquet"
-        c_path = RESULTS_DIR / f"clusters_{name}.parquet"
+        p_path = results / f"particles_{name}.parquet"
+        c_path = results / f"clusters_{name}.parquet"
         if p_path.exists() and c_path.exists():
             reference[name] = (
                 float((pd.read_parquet(p_path, columns=["eff_e"])["eff_e"] >= wp).mean()),
@@ -142,11 +157,11 @@ def main() -> None:
             )
 
     style.apply()
-    args.figure.parent.mkdir(parents=True, exist_ok=True)
+    figure_path.parent.mkdir(parents=True, exist_ok=True)
     for suffix in ("pdf", "png"):
-        figures.working_point_curve(scan, reference=reference, out=args.figure.with_suffix(f".{suffix}"))
+        figures.working_point_curve(scan, reference=reference, out=figure_path.with_suffix(f".{suffix}"))
     plt.close("all")
-    print(f"wrote {args.figure}.pdf / .png")
+    print(f"wrote {figure_path}.pdf / .png")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ import optuna
 import pandas as pd
 
 from src.clue.pipeline import PARAMETER_NAMES, cluster_subsystem
-from src.config import settings
+from src.config import active_dataset, clue_search, settings
 from src.evaluation.metrics import score_event
 
 SEARCH_PARAMETERS = ("d_c_2d", "rho_c_2d", "d_c_3d", "rho_c_3d", "depth_scale")
@@ -73,7 +73,7 @@ def suggest_parameters(trial: optuna.Trial, subsystem: str, config: Mapping | No
     uniform draw would put almost every trial in the top decade.
     """
     config = config or settings()["clue"]
-    ranges = config["search"][config["coords"]][subsystem]
+    ranges = clue_search(subsystem)
 
     params: dict[str, float] = {}
     for name in SEARCH_PARAMETERS:
@@ -175,8 +175,12 @@ def tune_subsystem(records: Sequence, subsystem: str, storage_url: str | None = 
     """
     config = settings()["clue"]
 
+    # The dataset is in the study name, not just the coordinates and the subsystem. With a
+    # `--storage` URL and `load_if_exists`, a pu200 run would otherwise resume the pu0 study
+    # of the same name and return pu0's trials as its answer -- silently, and with a plausible
+    # objective value attached.
     study = optuna.create_study(
-        study_name=f"clue_{config['coords']}_{subsystem}",
+        study_name=f"clue_{active_dataset()}_{config['coords']}_{subsystem}",
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=settings()["seed"]),
         storage=storage_url,
@@ -197,7 +201,7 @@ def tune_subsystem(records: Sequence, subsystem: str, storage_url: str | None = 
     # sampled. Testing near-equality to the endpoint instead would essentially never fire:
     # the optimiser rarely returns the exact bound, it returns something a few percent
     # inside it, which is just as much a sign the range is wrong.
-    ranges = config["search"][config["coords"]][subsystem]
+    ranges = clue_search(subsystem)
     for name in SEARCH_PARAMETERS:
         low, high = ranges[name]
         position = np.log(params[name] / low) / np.log(high / low)

@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.clue.pipeline import SUBSYSTEMS, cluster_event
-from src.config import RESULTS_DIR, settings, store_expectations, store_path
+from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.evaluation.soft import capability_summary, hard_weights, score_event_soft, sharing_diagnostics
 from src.io.event_store import EventStore
 from scripts.score import DEFAULT_CLUE_PARAMS
@@ -37,21 +37,25 @@ from scripts.score import DEFAULT_CLUE_PARAMS
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--store", type=Path, default=None)
-    parser.add_argument("--params", type=Path, default=RESULTS_DIR / "clue_parameters.json")
-    parser.add_argument("--out", type=Path, default=RESULTS_DIR)
+    parser.add_argument("--params", type=Path, default=None,
+                        help="defaults to results/<active dataset>/clue_parameters.json")
+    parser.add_argument("--out", type=Path, default=None, help="defaults to results/<active dataset>/")
     parser.add_argument("--limit", type=int, default=0, help="score only the first N events")
     args = parser.parse_args()
 
     cfg = settings()
+    out_dir = args.out or results_dir()
+    params_path = args.params or (results_dir() / "clue_parameters.json")
+    print(describe())
     store = EventStore(args.store or store_path(), expect=store_expectations())
     print(f"{len(store)} events from {store.root}")
 
-    if args.params.exists():
-        tuned = json.loads(args.params.read_text())["subsystems"]
+    if params_path.exists():
+        tuned = json.loads(params_path.read_text())["subsystems"]
         clue_params = {name: entry["parameters"] for name, entry in tuned.items()}
     else:
         clue_params = {name: DEFAULT_CLUE_PARAMS for name in SUBSYSTEMS}
-        print("  clue params  UNTUNED defaults")
+        print(f"  clue params  UNTUNED defaults (no {params_path})")
 
     # The incidence head is the reason this study exists in the form it does, so it is scored
     # here whenever the store carries it. `maskformer` divides a contested cell in proportion
@@ -107,18 +111,18 @@ def main() -> None:
         )
         diagnostics["clue"].append(sharing_diagnostics(record, c_cell, c_weight))
 
-    args.out.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     tables = []
     for algo, parts in frames.items():
         table = pd.concat(parts, ignore_index=True)
-        path = args.out / f"soft_particles_{algo}.parquet"
+        path = out_dir / f"soft_particles_{algo}.parquet"
         table.to_parquet(path, index=False)
         print(f"  wrote {path}  ({len(table)} rows, {path.stat().st_size / 1e6:.1f} MB)")
         tables.append(table)
 
     wp = cfg["metrics"]["working_points"][0]
     summary = capability_summary(tables, wp, diagnostics)
-    summary.to_csv(args.out / "capability_summary.csv", index=False)
+    summary.to_csv(out_dir / "capability_summary.csv", index=False)
     print("\n" + summary.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
 
 
