@@ -125,6 +125,10 @@ hepattn_colliderml/          verbatim copy of hepattn/src/hepattn/experiments/co
                              first: one card on the node has ~818 uncorrected errors and kills
                              long jobs minutes in.
 
+ce_ai_1/                     Launchers for ce-ai-1, the machine the pu200 work runs on, and the
+                             record of what pileup-200 forced to change. NOT part of the mirror --
+                             these are mine, so keeping them out of hepattn_colliderml/ is what
+                             lets verify_sync.sh still pass. Start at ce_ai_1/README.md.
 checkpoint/                  The trained weights the reported results come from, plus provenance.
 hepattn-changes.patch        My modifications to the upstream library.
 verify_sync.sh               Checks hepattn_colliderml/ against a hepattn checkout.
@@ -174,6 +178,11 @@ run URL with the training curves.
 Nothing below is needed to reproduce the thesis figures. That is `python -m scripts.make_figures`
 from the repository root, and it touches none of this.
 
+> **On ce-ai-1, none of the commands in this section apply.** That machine has no Slurm, no
+> apptainer and no pixi, and the pu200 run needs different cuts to fit at all. See
+> [`ce_ai_1/README.md`](ce_ai_1/README.md), which covers both. What follows is the DIAS setup the
+> pu0 checkpoint was produced on, kept because it is the provenance of the reported results.
+
 **Environment.** The cluster is RHEL7 (glibc 2.17) and the environment needs glibc 2.28+, so
 everything runs inside an Ubuntu 22.04 container:
 
@@ -212,6 +221,9 @@ Then point `dataset.pu0.store` in `config/experiment.yaml` at the result, and ev
 there on is numpy.
 
 ### Dumping a pileup-200 store
+
+On ce-ai-1 this is `ce_ai_1/dump_store_pu200.sh tune|eval`, which has the three decisions below
+already made and explained. The rest of this section is the reasoning behind them.
 
 The same command, with three things to decide first, because none of them has a right default:
 

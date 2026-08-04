@@ -31,11 +31,18 @@ src/plotting/            figure generation
 src/maskformer/          the learned model: training config, the trained weights, and the dump
                          that writes an event store. Needs hepattn and a GPU; see below
 scripts/                 command line entry points
+setup/                   fresh clone -> reproduced result: both environments, and the dataset
+                         download. Start here on a new machine
 tests/                   scorer identity tests and the CLUE periodic-metric regression
 results/<dataset>/       pooled parquet tables, one directory per pileup condition
 figures/<dataset>/       generated figures, likewise
 attic/                   superseded code, kept for its decisions and imported by nothing
+external/                gitignored: everything setup/ builds (hepattn checkout, both
+                         environments). Delete it to return the clone to its committed state
 ```
+
+Only the dataset lives outside the repository — it is ~300 GB and sits on a shared datastore.
+Everything else, including anything these scripts build, is under this directory.
 
 Two things about that layout are load-bearing.
 
@@ -132,8 +139,17 @@ changes four things at once, which is the point — the alternative is rememberi
 
 The order to work in, and what each step is waiting on:
 
+> The pu200 run happens on **ce-ai-1**, not on DIAS, and pileup-200 events are ~24x larger than
+> pu0 events — large enough that the pu0 model configuration does not fit an 80 GB A100 at all.
+> **[`src/maskformer/ce_ai_1/README.md`](src/maskformer/ce_ai_1/README.md)** is the entry point:
+> it covers the environments, the measured cuts that make pu200 fit, the event budget, and the
+> order to run steps 0-5 below. Read it before step 1.
+
+0. **Train a pu200 checkpoint.** There is not one yet; the checkpoint in `src/maskformer/` is
+   pileup-0. `ce_ai_1/benchmark_pu200.sh` then `ce_ai_1/train_pu200.sh`.
 1. **Dump the two stores.** `src/maskformer/README.md` has the command and the three settings
-   that need deciding for pu200 (`OUT`, `CHUNK`, and leaving `INCIDENCE_TOP_K` alone).
+   that need deciding for pu200 (`OUT`, `CHUNK`, and leaving `INCIDENCE_TOP_K` alone);
+   `ce_ai_1/dump_store_pu200.sh` has them already made.
 2. **Fill in `dataset.pu200`** — the two store paths and the four window numbers — then run
    `python -m scripts.show_config` and read it back. The store validates its own metadata
    against the config on open, so a mismatch stops the run rather than shifting the numbers.

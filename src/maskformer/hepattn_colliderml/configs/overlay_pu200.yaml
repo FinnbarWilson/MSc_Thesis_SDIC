@@ -1,0 +1,185 @@
+# Overlay: train on ColliderML ttbar pileup-200, on ce-ai-1.
+#
+#   main.py fit --config configs/calo_clustering.yaml --config configs/overlay_pu200.yaml
+#
+# Everything in calo_clustering.yaml is a PU0 measurement. This file changes only what pileup
+# forces, and records the number that forced it. It is the pu200 analogue of that file's own
+# commentary, not a second copy of it.
+#
+# ---------------------------------------------------------------------------------------------
+# WHY PU200 IS NOT "PU0 WITH MORE HITS"
+#
+# Measured on ttbar_pu200 shard 0 (100 events), against the cuts calo_clustering.yaml sets:
+#
+#                                   pu0 (config built for)   pu200 (measured)    ratio
+#   calo hits/event (>2e-4 GeV)     ~22,000                  532,507             24x
+#   target particles/event          ~600                     8,182               13.6x
+#
+# MaskFormer's memory is driven by num_queries x num_hits (the per-layer mask logits). pu0 sits at
+# 1000 x 22,000 = 2.2e7 and ALREADY OOMs at 4x -- calo_clustering.yaml records that batch_size 4
+# OOMed an 80 GB A100. A faithful pu200 event is 8,182 x 532,507 = 4.4e9, about 200x the pu0
+# footprint. That is not a tuning problem; it is two orders of magnitude past the card.
+#
+# So pu200 is bought back with two cuts, both measured before being chosen:
+#
+#   calohit_min_energy 2e-4 -> 1e-3   532,507 -> 112,265 hits/event, keeping 59% of calo energy
+#   particle_min_pt    0.5  -> 2.0     8,182  ->     277 targets/event
+#
+# Together (measured jointly over 20 events, which is the configuration below):
+#   hits/event    mean 117,189   p95 140,317   max 151,676
+#   targets/event mean     277   p95     355   max     368
+#   mask-logit footprint: 2.66x pu0 -- under the 4x that OOMed, with margin.
+#
+# WHAT THIS COSTS, STATED PLAINLY. These numbers are NOT comparable to the pu0 numbers in
+# results/pu0/. The target definition changed (pt > 2 GeV reconstructs hard particles only) and
+# 41% of the calorimeter energy is zero-suppressed away. What it does NOT cost is the fairness of
+# the pu200 head-to-head: CLUE reads the event store dumped from THIS dataloader, so both methods
+# see exactly these cells and exactly these targets. The comparison stays controlled; only its
+# comparability to pu0 is lost. Say so when quoting both.
+#
+# IF IT STILL OOMs, in this order (each roughly halves the footprint):
+#   1. calohit_min_energy 1e-3 -> 2e-3   (43,000 hits/event, ~40% of energy)
+#   2. num_queries/event_max_num_particles 500 -> 400  (still covers 100% of events; max seen 368)
+#   3. accumulate_grad_batches is already the memory-free way to batch; do not raise batch_size.
+# ---------------------------------------------------------------------------------------------
+
+data:
+  # Downloaded to the datastore, not $HOME: / has ~100 GB free and this is 297 GB.
+  # Layout is "<dataset_prefix>_<collection>" under this directory, i.e.
+  # <dir>/ttbar_pu200_calo_hits and <dir>/ttbar_pu200_particles. The path below is a symlink to
+  # the HF snapshot's data/ directory, so that layout holds without moving 297 GB around.
+  train_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
+  val_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
+  test_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
+  dataset_prefix: ttbar_pu200
+
+  # Zero-suppression, raised from 2e-4. This is the hit-count lever and 1e-3 is, measured, the
+  # loosest cut that fits: the benchmark peaks at 68.5 GB of 81 GB at the 117k hits/event this
+  # gives, and 2e-4 means 532k hits, i.e. ~4.5x the activations. It is a ceiling, not a preference.
+  #
+  # WHAT IT COSTS, MEASURED ON HARD PARTICLES RATHER THAN ON THE EVENT AVERAGE. The event-level
+  # figure (59% of calorimeter energy kept) flatters this, because most of the energy it discards
+  # is pileup. The number that matters is what happens to the pt > 2 GeV particles the model is
+  # actually asked to reconstruct:
+  #
+  #   cell cut   hits per hard particle   their energy kept   hard particles left with <3 hits
+  #   2e-4                         27.7               93.0%                              4.9%
+  #   1e-3                         10.3               66.4%                             17.7%
+  #
+  # So a hard particle loses ~63% of its cells and a third of its energy, and 17.7% of them fall
+  # under particle_min_num_calohits and leave the target set entirely -- out of the numerator AND
+  # the denominator.
+  #
+  # BE HONEST ABOUT WHAT THIS IS. calo_clustering.yaml records 1e-3 being tried at pu0 and rejected
+  # as "far too aggressive and the main thing capping performance", where it took median hits per
+  # particle from 15 to 4. This re-introduces that failure mode at pu200. The usual defence -- that
+  # at pu200 the removed cells are pileup rather than signal -- is only half true: the table above
+  # is signal, and it is being shredded too.
+  #
+  # The fixes that do NOT cost this are structural, not config: crop to eta-phi regions (keeps the
+  # pu0 cuts, shrinks the SAMPLE rather than the information), or train the hit-filter stage that
+  # ../../README.md flags as worth revisiting at pu200. Both are real work. Until one exists, quote
+  # pu200 numbers as measured under this cut and say so.
+  calohit_min_energy: 1.0e-3
+
+  # Raised from 0.5. This is the target-count lever and the bigger physics change of the two:
+  # at pt > 0.5 there are 8,182 reconstructable particles per event, which no query budget reaches.
+  # 2.0 GeV leaves 277. Reconstructing every soft pileup particle is not the pu200 question anyway.
+  particle_min_pt: 2.0
+
+  # 500, down from 1000, and it must equal num_queries below (MaskFormer matches num_queries
+  # predictions to that many padded target slots). Measured max over 20 events is 368 targets and
+  # p95 is 355, so 500 covers 100% of events with headroom -- unlike pu0, where 1000 was chosen to
+  # sit just above a p95 of 954. Lower than pu0 despite pu200 having far MORE particles, because
+  # the pt cut above removes the soft ones. Halving it also halves the mask-logit memory.
+  event_max_num_particles: 500
+
+  # 8, down from 10. Each pu200 calo_hits shard decodes to 4.0 GB in memory (measured), against
+  # ~1.5 GB at pu0, and data.py caches 8 decoded row groups PER WORKER -- with one row group per
+  # shard, a cached entry is a whole shard. The old cluster ran 10 workers inside a 128 GB job;
+  # ce-ai-1 has 1.5 TB, so 8 workers is comfortable, but watch RSS on the first run and drop to 4
+  # if it climbs. This is the one pu200 memory pressure that is on the HOST, not the GPU.
+  num_workers: 8
+
+  # Event windows, all disjoint, inside the 10,000 events downloaded (shards 0-99 x 100 events).
+  # The two store windows are left free for the CLUE comparison and must not be trained on:
+  #   train [0, 6000)   val [6000, 6250)   test [6250, 6750)
+  #   CLUE tune store  [7000, 7050)    <- dumped later, 50 events
+  #   CLUE eval store  [7500, 8000)    <- dumped later, 500 events
+  #   spare            [8000, 10000)
+  # src/io/event_store.py ASSERTS the eval store is disjoint from the training window, so getting
+  # this wrong fails loudly at scoring time rather than silently inflating the model's numbers.
+  num_train: 6000
+  num_val: 250
+  num_test: 500
+  train_start_event: 0
+  val_start_event: 6000
+  test_start_event: 6250
+
+trainer:
+  # MEASURED on ce-ai-1, not estimated. ce_ai_1/benchmark_pu200.sh over 200 pu200 events:
+  #
+  #   Lightning training loop   0.98 events/s   (peak GPU 68,456 MiB of 81,037)
+  #
+  # That is startlingly close to pu0's 1.13 events/s despite 5.3x the hits per event, because
+  # halving the queries to 500 cancels most of it and the encoder is windowed (linear in N).
+  # It also makes the earlier 0.25 ev/s guess in this file wrong by 4x, in the safe direction.
+  #
+  # THE BENCHMARK NUMBER IS OPTIMISTIC, AND DE-RATING IT BY THE PU0 FACTOR WAS NOT ENOUGH.
+  #
+  # 200 benchmark events is 2 shards, so the working set stays inside data.py's
+  # 8-row-groups-per-worker cache -- a hit rate the real run never sees. calo_clustering.yaml
+  # measured that effect at pu0 (1.89 ev/s at num_train=3000 falling to 1.42 at 20000, -25%), so
+  # this was first sized at 0.98 x 0.75 = 0.73 ev/s and max_epochs 9.
+  #
+  # THE REAL RUN MEASURED 0.58 ev/s, not 0.73 -- the pu200 penalty is -41%, not -25%, because a
+  # decoded pu200 shard is 4.0 GB against ~1.5 GB at pu0, so the same 8 cache slots hold far less
+  # of the working set. Measured on the first epoch at num_train=6000 (Lightning's own bar):
+  #
+  #   710/6000 in 20:26  ->  0.58 events/s
+  #   epoch = 6000/0.58 + 1000/(0.58x3) = 2.88 h + 10 min validation = 3.04 h
+  #   7 epochs = 21.3 h      (8 -> 24.3 h, 9 -> 27.4 h)
+  #
+  # At 9 this run would have hit the 23:30 max_time wall during epoch 8 and stopped with OneCycle
+  # still at a high learning rate -- the exact waste calo_clustering.yaml describes. 7 keeps 2.2 h
+  # of margin against that wall.
+  #
+  # THE LESSON FOR NEXT TIME: benchmark with at least as many shards as the real run will touch
+  # (EVENTS >= num_train/10 gets most of the way), or treat any short-benchmark number as an upper
+  # bound only. OneCycleLR is sized from TOTAL steps, so if you change num_train or the walltime,
+  # resize this too.
+  max_epochs: 7
+
+  # A safety net, NOT the plan. Lightning stops cleanly at this wall, which prevents a mis-estimated
+  # throughput from running for days -- but a run stopped here is TRUNCATED in exactly the way the
+  # paragraph above warns about, so treat it triggering as a sizing bug to fix, not a normal ending.
+  max_time: "00:23:30:00"
+
+  logger:
+    init_args:
+      # Separate Comet project from the pu0 runs. The pu0 project is the record behind
+      # results/pu0/ and the thesis figures; mixing two pileup conditions into one project makes
+      # the loss curves incomparable at a glance for no benefit.
+      project: colliderml-calo-clustering-pu200
+
+model:
+  model:
+    init_args:
+      decoder:
+        # Restated in full rather than overriding num_queries alone. YAML anchors do not cross
+        # files (calo_clustering.yaml says so where it defines &num_objects and &dim), and a
+        # partial mapping here risks jsonargparse replacing the block rather than merging into it
+        # -- which would silently drop num_decoder_layers and decoder_layer_config back to their
+        # defaults. Restating is what overlay_metric_aligned.yaml does with `tasks`, for the same
+        # reason. KEEP IN SYNC WITH calo_clustering.yaml; the only intended difference is
+        # num_queries.
+        num_decoder_layers: 4
+        num_queries: 500          # must equal data.event_max_num_particles above
+        mask_attention: true
+        use_query_masks: false
+        decoder_layer_config:
+          dim: 256                # anchors do not cross files; this is *dim from calo_clustering.yaml
+          norm: FastLayerNorm
+          hybrid_norm: true
+          dense_kwargs: {activation: SwiGLU}
+          attn_kwargs: {bias: false}

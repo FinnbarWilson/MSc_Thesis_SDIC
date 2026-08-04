@@ -48,6 +48,15 @@ dependencies:
   # for linux-64 also stops at 1.85 in the `boost` form, whereas the header-only
   # package tracks 1.91, so this is both the smaller and the newer dependency.
   - libboost-headers
+  # libboost as well as libboost-headers, and the comment above was measured wrong on one point:
+  # CLUEstering 2.11.0's CMakeLists does `find_package(Boost COMPONENTS atomic)`, i.e. it links a
+  # COMPILED Boost library, not just headers. With libboost-headers alone the wheel build fails:
+  #     Could NOT find Boost (missing: atomic) (found suitable version "1.91.0")
+  # libboost is the compiled libraries WITHOUT the python bindings, so it fixes this while keeping
+  # the reason libboost-headers was chosen over `boost` intact -- it does not pull libboost-python
+  # and so does not drag in the icu that fails to co-solve with pyarrow 24 / pandas 3. Measured:
+  # it resolves as a single 3.1 MB package with no other changes to the environment.
+  - libboost
   - cmake
   - ninja
   - cxx-compiler
