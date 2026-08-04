@@ -8,12 +8,18 @@ two exactly as if the metric had never been set.
 
 These tests pin both halves of the fix, and the negative case is asserted deliberately: it
 is what stops someone "simplifying" the call back to metric-only.
+
+CLUEstering is the one dependency here that has to be compiled, and it is absent from the
+laptop environment an assessor regenerates the figures in. Skipping this module is therefore
+the correct behaviour there -- but it has to be a *skip*, not a collection error, or a missing
+optional dependency takes the whole suite down with it and none of the scorer tests run
+either.
 """
 
 import numpy as np
 import pytest
 
-import CLUEstering as clue
+clue = pytest.importorskip("CLUEstering", reason="CLUEstering is not installed; see environment.yml")
 
 TWO_PI = 2.0 * np.pi
 

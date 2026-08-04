@@ -21,14 +21,11 @@ import pytest
 from src.evaluation.matching import contamination, fragmentation, hungarian_match, overlap_matrix
 from src.evaluation.metrics import local_density, score_event
 from src.io.event_store import EventStore
+from tests.conftest import open_smoke_store
 
-STORE = Path("/home/xucapfwi/eventstore_smoke/ttbar_pu0_20250_20255_v1")
-
-
-def _store():
-    if not STORE.exists():
-        pytest.skip(f"no event store at {STORE}")
-    return EventStore(STORE)
+# The store path, the skip and the caching all live in tests/conftest.py, so that
+# SMOKE_STORE=... points every module at the same one -- including a pu200 store.
+_store = open_smoke_store
 
 
 def test_overlap_matrix_counts_shared_cells():

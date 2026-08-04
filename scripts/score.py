@@ -6,9 +6,12 @@ inspecting two configs cannot guarantee.
 
     python -m scripts.score --algo maskformer
     python -m scripts.score --algo maskformer_incidence
-    python -m scripts.score --algo clue --params results/clue_parameters.json
-    python -m scripts.score --algo oracle_seeded
+    python -m scripts.score --algo clue --params results/pu0/clue_parameters.json
+    python -m scripts.score --algo oracle_geometric
     python -m scripts.score --algo oracle_resolution
+
+Tables land in ``results/<active dataset>/``, so the same commands produce the pu200 set
+after flipping ``dataset.active`` and cannot overwrite the pu0 one.
 
 `maskformer` and `maskformer_incidence` are the same checkpoint at the same working point,
 differing only in which head decides who owns a contested cell -- the mask head's per-(query,
@@ -30,7 +33,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.clue.pipeline import SUBSYSTEMS, cluster_event
-from src.config import RESULTS_DIR, settings, store_expectations, store_path
+from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.evaluation.metrics import pool, score_event
 from src.evaluation.oracle import geometric_labels, resolution_labels
 from src.io.event_store import EventStore
@@ -93,26 +96,43 @@ def main() -> None:
         required=True,
     )
     parser.add_argument("--store", type=Path, default=None, help="defaults to dataset.<active>.store")
-    parser.add_argument("--params", type=Path, default=None, help="tuned CLUE parameters as JSON")
-    parser.add_argument("--out", type=Path, default=RESULTS_DIR)
+    parser.add_argument("--params", type=Path, default=None,
+                        help="tuned CLUE parameters as JSON; defaults to this dataset's "
+                             "results/<active dataset>/clue_parameters.json when it exists")
+    parser.add_argument("--out", type=Path, default=None, help="defaults to results/<active dataset>/")
     parser.add_argument("--limit", type=int, default=0, help="score only the first N events")
     parser.add_argument("--tag", default=None, help="suffix for the output files")
     args = parser.parse_args()
 
     cfg = settings()
+    out_dir = args.out or results_dir()
+    print(describe())
     store = EventStore(args.store or store_path(), expect=store_expectations())
     print(f"{len(store)} events from {store.root}")
     print(f"  checkpoint  {store.meta['maskformer']['checkpoint'].rsplit('/', 1)[-1]}")
     print(f"  cuts        {store.meta['hit_selection']}  {store.meta['particle_selection']}")
 
-    if args.params:
-        tuned = json.loads(args.params.read_text())["subsystems"]
-        params_by_subsystem = {name: entry["parameters"] for name, entry in tuned.items()}
-        print(f"  clue params  tuned, from {args.params}")
+    # Defaulting to the active dataset's own parameter file rather than requiring --params.
+    # The explicit flag was a footgun once results became dataset-scoped: the obvious command
+    # to type is the one in the README, and the path in the README belonged to whichever
+    # dataset it was written for, so a pu200 run would have been handed pu0's tuning without
+    # anything looking wrong. `tune_clue` records the dataset inside the file, and the
+    # mismatch is reported below.
+    params_path = args.params or (results_dir() / "clue_parameters.json")
+    if params_path.exists():
+        tuned = json.loads(params_path.read_text())
+        params_by_subsystem = {name: entry["parameters"] for name, entry in tuned["subsystems"].items()}
+        print(f"  clue params  tuned, from {params_path}")
+        tuned_on = tuned.get("dataset")
+        if tuned_on and tuned_on != cfg["dataset"]["active"]:
+            print(f"  ! those parameters were tuned on {tuned_on}, not {cfg['dataset']['active']}. "
+                  f"CLUE's density thresholds do not transfer across pileup conditions; "
+                  f"run scripts.tune_clue on this dataset.")
     else:
         params_by_subsystem = {name: DEFAULT_CLUE_PARAMS for name in SUBSYSTEMS}
         if args.algo == "clue":
-            print("  clue params  UNTUNED defaults -- run scripts.tune_clue before reporting these numbers")
+            print(f"  clue params  UNTUNED defaults (no {params_path}) -- run scripts.tune_clue "
+                  f"before reporting these numbers")
 
     particles, clusters, events = [], [], []
     for i, record in enumerate(store):
@@ -147,9 +167,9 @@ def main() -> None:
     events = pool(events)
 
     tag = args.tag or args.algo
-    args.out.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for name, table in (("particles", particles), ("clusters", clusters), ("events", events)):
-        path = args.out / f"{name}_{tag}.parquet"
+        path = out_dir / f"{name}_{tag}.parquet"
         table.to_parquet(path, index=False)
         print(f"  wrote {path}  ({len(table)} rows, {path.stat().st_size / 1e6:.1f} MB)")
 

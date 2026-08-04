@@ -161,7 +161,7 @@ def score_event(
     # report, for the same reason energy-weighted efficiency is primary. The gap between them
     # is not cosmetic and it falls almost entirely on splitting: above ~8 GeV the two
     # definitions disagree on the SIGN of MaskFormer's trend with energy. See the module
-    # docstring, and figures/weighting_comparison for the measured difference.
+    # docstring, and figures/<dataset>/weighting_comparison for the measured difference.
     n_frag = fragmentation(overlap_n, truth_total_n, split_fraction)
     n_owners = contamination(overlap_n, truth_total_n, split_fraction)
     n_frag_e = fragmentation(overlap_e, truth_total_e, split_fraction)

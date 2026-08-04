@@ -1,0 +1,214 @@
+diff --git a/src/hepattn/callbacks/prediction_writer.py b/src/hepattn/callbacks/prediction_writer.py
+index 4c59bea..25ca622 100644
+--- a/src/hepattn/callbacks/prediction_writer.py
++++ b/src/hepattn/callbacks/prediction_writer.py
+@@ -16,6 +16,7 @@ class PredictionWriter(Callback):
+         write_targets: bool,
+         write_losses: bool,
+         write_layers: list[str] | None = None,
++        output_name: str | None = None,
+     ):
+         if write_layers is None:
+             write_layers = ["final"]
+@@ -27,6 +28,7 @@ class PredictionWriter(Callback):
+         self.write_targets = write_targets
+         self.write_losses = write_losses
+         self.write_layers = write_layers
++        self.output_name = output_name
+ 
+         self.file = None
+         self.num_queries: int | None = None
+@@ -45,15 +47,24 @@ class PredictionWriter(Callback):
+         # Open the handle for writing to the file
+         self.file = h5py.File(self.output_path, "w")
+ 
+-    def _resolve_num_queries(self, pl_module: LightningModule) -> int:
+-        # User assumption: model.decoder._num_queries is always available.
+-        return int(pl_module.model.decoder._num_queries)  # noqa: SLF001
++    def _resolve_num_queries(self, pl_module: LightningModule) -> int | None:
++        # Query-free models (e.g. hepattn.models.HitFilter, used for hit-filter stages) have no
++        # decoder, so this is genuinely absent rather than an error — hence the `int | None` type on
++        # self.num_queries. Previously this raised AttributeError and made it impossible to write
++        # predictions from any filter model.
++        decoder = getattr(pl_module.model, "decoder", None)
++        num_queries = getattr(decoder, "_num_queries", None) if decoder is not None else None
++        return int(num_queries) if num_queries is not None else None
+ 
+     @property
+     def output_path(self) -> Path:
+-        # The output dataset will be saved in the same directory as the checkpoint
+-        split = Path(self.dataset.dirpath).name
+-        return Path(self.trainer.ckpt_dir / f"{self.trainer.ckpt_name}_{split}_eval.h5")
++        # The output dataset will be saved in the same directory as the checkpoint.
++        # The default tag is the data directory name, which distinguishes splits only when they live
++        # in separate directories (as in trackml: .../train, .../val, .../test). Datasets that carve
++        # their splits out of ONE directory by event range would otherwise write all three splits to
++        # the same filename, silently overwriting each other — pass output_name to disambiguate.
++        tag = self.output_name if self.output_name is not None else Path(self.dataset.dirpath).name
++        return Path(self.trainer.ckpt_dir / f"{self.trainer.ckpt_name}_{tag}_eval.h5")
+ 
+     def on_test_batch_end(self, trainer, pl_module, test_step_outputs, batch, batch_idx):
+         inputs, targets = batch
+diff --git a/src/hepattn/models/loss.py b/src/hepattn/models/loss.py
+index f1f6f9d..396c9b3 100644
+--- a/src/hepattn/models/loss.py
++++ b/src/hepattn/models/loss.py
+@@ -88,6 +88,44 @@ def mask_dice_loss(pred_logits, targets, object_valid_mask=None, input_pad_mask=
+     return loss.mean()
+ 
+ 
++def mask_dice_weighted_loss(pred_logits, targets, object_valid_mask=None, input_pad_mask=None, sample_weight=None):
++    """DICE loss with a per-element weight, for when not every input is worth the same.
++
++    A separate function rather than a flag on :func:`mask_dice_loss`, which documents that it
++    ignores `sample_weight`. Every caller of the plain version passes one (ObjectHitMaskTask
++    always does, to carry `null_weight`), so honouring it there would silently change the
++    objective of every existing configuration. Opting in by name cannot.
++
++    The weight enters both the intersection and the normalisation, so it is a DICE over a
++    weighted measure of the mask rather than over its cardinality. With a uniform weight this
++    reduces exactly to :func:`mask_dice_loss`, which is asserted in the tests.
++
++    Args:
++        pred_logits: [batch_size, num_objects, num_inputs] - predicted logits for binary masks
++        targets: [batch_size, num_objects, num_inputs] - ground truth binary masks
++        object_valid_mask: [batch_size, num_objects] - mask indicating valid target objects
++        input_pad_mask: [batch_size, num_inputs] - mask indicating valid inputs
++        sample_weight: [batch_size, num_objects, num_inputs] - per-element weight
++
++    Returns:
++        loss: Scalar tensor representing the weighted DICE loss
++    """
++    if object_valid_mask is not None:
++        pred_logits = pred_logits[object_valid_mask]
++        targets = targets[object_valid_mask]
++        sample_weight = sample_weight[object_valid_mask] if sample_weight is not None else None
++
++    probs = pred_logits.sigmoid()
++    if input_pad_mask is not None:
++        probs = probs * input_pad_mask.unsqueeze(1)
++
++    weight = 1.0 if sample_weight is None else sample_weight
++    numerator = 2 * (weight * probs * targets).sum(-1)
++    denominator = (weight * probs).sum(-1) + (weight * targets).sum(-1)
++    loss = 1 - (numerator + 1) / (denominator + 1)
++    return loss.mean()
++
++
+ def mask_dice_cost(pred_logits, targets, input_pad_mask=None, sample_weight=None):
+     """Compute DICE costs.
+     Invalid objects are handled later in the matching process.
+@@ -353,6 +391,12 @@ cost_fns = {
+     "object_ce": torch.compile(object_ce_cost, dynamic=True),
+     "mask_bce": torch.compile(mask_bce_cost, dynamic=True),
+     "mask_dice": torch.compile(mask_dice_cost, dynamic=True),
++    # Deliberately the unweighted DICE cost. Tasks call cost functions without a
++    # `sample_weight`, so this is what a weighted DICE reduces to at matching time anyway;
++    # the entry exists so a config naming `mask_dice_weighted` in both `losses` and `costs`
++    # resolves instead of raising. Matching decides WHICH query owns a target and is a
++    # cardinality question; the weighting is about how much a cell counts once it does.
++    "mask_dice_weighted": torch.compile(mask_dice_cost, dynamic=True),
+     "mask_focal": torch.compile(mask_focal_cost, dynamic=True),
+     "mask_iou": torch.compile(mask_iou_cost, dynamic=True),
+     "kl_div": torch.compile(kl_div_cost, dynamic=True),
+@@ -364,6 +408,7 @@ loss_fns = {
+     "object_ce": torch.compile(object_ce_loss, dynamic=True),
+     "mask_bce": torch.compile(mask_bce_loss, dynamic=True),
+     "mask_dice": torch.compile(mask_dice_loss, dynamic=True),
++    "mask_dice_weighted": torch.compile(mask_dice_weighted_loss, dynamic=True),
+     "mask_focal": torch.compile(mask_focal_loss, dynamic=True),
+     "kl_div": torch.compile(kl_div_loss, dynamic=True),
+     "mask_kl_div": torch.compile(mask_kl_div_loss, dynamic=True),
+diff --git a/src/hepattn/models/task.py b/src/hepattn/models/task.py
+index 47edfc8..d7ab3a1 100644
+--- a/src/hepattn/models/task.py
++++ b/src/hepattn/models/task.py
+@@ -109,6 +109,7 @@ class ObjectClassificationTask(Task):
+         mask_queries: bool = False,
+         has_intermediate_loss: bool = True,
+         has_first_layer_loss: bool = False,
++        eval_threshold: float | None = None,
+     ):
+         """Task for object detection and classification in set prediction scenarios.
+ 
+@@ -138,6 +139,13 @@ class ObjectClassificationTask(Task):
+             mask_queries: Whether to mask queries based on predictions.
+             has_intermediate_loss: Whether the task has intermediate loss.
+             has_first_layer_loss: Whether the task has first layer loss (defaults to has_intermediate_los if not specified).
++            eval_threshold: Probability above which a query counts as a real object at prediction
++                time. None (the default) keeps the original behaviour, where validity comes from an
++                argmax over the class probabilities — equivalent to a fixed threshold of 0.5. Set it
++                lower to trade fake objects for efficiency; because a true object only counts when
++                its matched query is also accepted here, this gate can cost real efficiency that the
++                masks had already earned. Affects prediction and metrics only, never the loss or the
++                matching, so it can be retuned on a trained checkpoint.
+ 
+         Raises:
+             ValueError: If the number of class_weights doesn't match num_classes.
+@@ -166,6 +174,7 @@ class ObjectClassificationTask(Task):
+         self.costs = costs
+         self.num_classes = num_classes
+         self.mask_queries = mask_queries
++        self.eval_threshold = eval_threshold
+ 
+         # Create network based on provided arguments
+         self.output_size = 1 if num_classes == 1 else num_classes + 1
+@@ -224,7 +233,9 @@ class ObjectClassificationTask(Task):
+         # Null class index == num_classes
+         valid_prob = 1 - class_probs[..., -1]
+         classes = class_probs.argmax(-1)
+-        valid = classes < self.num_classes
++        # argmax is exactly `valid_prob >= 0.5`; eval_threshold generalises that working point.
++        # Left as argmax when unset so existing configs are bit-for-bit unaffected.
++        valid = valid_prob >= self.eval_threshold if self.eval_threshold is not None else classes < self.num_classes
+ 
+         # Apply query_mask to mark padded queries as invalid
+         if query_mask is not None:
+@@ -496,6 +507,7 @@ class ObjectHitMaskTask(Task):
+         pred_threshold: float = 0.5,
+         mask_attention_threshold: float | None = None,
+         has_intermediate_loss: bool = True,
++        constituent_weight_field: str | None = None,
+     ):
+         """Task for predicting associations between objects and hits.
+ 
+@@ -519,6 +531,17 @@ class ObjectHitMaskTask(Task):
+             pred_threshold: Prediction threshold.
+             mask_attention_threshold: Threshold for attention masking. Defaults to pred_threshold if None.
+             has_intermediate_loss: Whether the task has intermediate loss.
++            constituent_weight_field: Name of a per-constituent target field, shape
++                [batch_size, num_inputs], multiplied into the loss's sample weight. None
++                keeps every constituent worth the same, which is the historical behaviour.
++
++                For calorimeters this is how the objective is made to agree with the metric.
++                DICE and focal both count cells, so a 1 MeV cell and a 1 GeV cell move the
++                loss equally, while every reported efficiency and purity is energy-weighted
++                because a calorimeter measures energy and not occupancy. Weighting by a
++                per-cell energy closes that gap. Note the weight reaches focal (and
++                `mask_dice_weighted`) but NOT plain `mask_dice`, which ignores sample weights
++                by design -- see hepattn.models.loss.
+         """
+         super().__init__(has_intermediate_loss=has_intermediate_loss)
+ 
+@@ -539,6 +562,7 @@ class ObjectHitMaskTask(Task):
+         self.logit_scale = logit_scale
+         self.pred_threshold = pred_threshold
+         self.mask_attention_threshold = mask_attention_threshold if mask_attention_threshold is not None else pred_threshold
++        self.constituent_weight_field = constituent_weight_field
+ 
+         self.output_object_hit = output_object + "_" + input_constituent
+         self.target_object_hit = target_object + "_" + input_constituent
+@@ -615,6 +639,13 @@ class ObjectHitMaskTask(Task):
+             object_pad = object_pad & query_mask
+ 
+         sample_weight = target + self.null_weight * (1 - target)
++
++        # Per-constituent weighting, off unless a field is named. Broadcast over the object
++        # axis: the weight is a property of the cell, so every query scores that cell with it.
++        if self.constituent_weight_field is not None:
++            weight = targets[self.constituent_weight_field].type_as(sample_weight)
++            sample_weight = sample_weight * weight.unsqueeze(-2)
++
+         losses = {}
+         for loss_fn, loss_weight in self.losses.items():
+             losses[loss_fn] = loss_weight * loss_fns[loss_fn](

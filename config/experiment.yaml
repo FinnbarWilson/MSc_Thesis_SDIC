@@ -14,14 +14,36 @@
 # against the store and refuses to proceed on a mismatch. That is a stronger
 # guarantee than two configs agreeing by inspection: the cells CLUE clusters are
 # byte-for-byte the cells the network was given.
+#
+# HOW TO READ THIS FILE WITH TWO PILEUP CONDITIONS IN IT
+#
+# Everything outside the `dataset:` block is the value MEASURED AT PU0, and the
+# comments below record those measurements. A pileup-200 event is the same
+# detector, the same target definition and the same metric -- with roughly two
+# orders of magnitude more cells in it -- so most of those values carry over
+# unchanged and the ones that cannot are density-dependent.
+#
+# Rather than nesting every key by dataset, a dataset may declare an `overrides:`
+# block that is deep-merged over everything else when it is the active one.
+# `src.config.settings()` returns the merged result, so no consumer knows this
+# happened; `python -m scripts.show_config` prints which keys were replaced.
+# The rule of thumb: if you find yourself changing a value outside `dataset:`
+# because of pileup, it belongs in that dataset's `overrides:` instead, or the
+# other condition silently changes with it.
 # =============================================================================
 
 # --- Which dataset to run on ------------------------------------------------
 # The path of an event store produced by
 #   hepattn.experiments.colliderml.eval.dump
 # This repository never opens a raw ColliderML file.
+#
+# `active` also decides where output lands: results/<active>/ and
+# figures/<active>/. Nothing writes to the bare directories, so a pu200 run can
+# never overwrite a pu0 table, and the two sets of numbers cannot be mixed into
+# one figure by forgetting which is which.
 dataset:
   active: pu0            # pu0 | pu200
+
   pu0:
     # Format 2, which carries the incidence head as well as the masks. The v1 store beside it
     # is the same checkpoint and the same events and still scores identically for `maskformer`,
@@ -29,9 +51,61 @@ dataset:
     # forward pass and thrown away.
     store: /home/xucapfwi/eventstore_ep003_v2/ttbar_pu0_20250_20750_v2
     tune_store: /home/xucapfwi/eventstore/ttbar_pu0_20000_20050_v1
+    windows:
+      eval_start: 20250
+      eval_events: 500
+      tune_start: 20000
+      tune_events: 50
+
+  # --- pileup 200 -----------------------------------------------------------
+  # Not yet run. What is written here is the list of things that must be decided
+  # before it can be, so that they are decided rather than inherited by default.
+  #
+  # UNSET ON PURPOSE, not forgotten. `store_path()` raises naming the key when
+  # one of these is empty, which is a better failure than silently scoring pu0
+  # events and labelling them pu200.
   pu200:
-    store: ""            # set when the pileup-200 sample is available
+    store: ""
     tune_store: ""
+    # The store carries its own window and asserts it is disjoint from the
+    # checkpoint's training window, so these numbers exist for one purpose: the
+    # CLUE tune-vs-eval overlap check in src/config.py. Set them to the windows
+    # the two pu200 stores were actually dumped over.
+    windows:
+      eval_start: 0
+      eval_events: 0
+      tune_start: 0
+      tune_events: 0
+
+    overrides:
+      maskformer:
+        # A different sample needs a different checkpoint -- a pu0-trained model
+        # run on pu200 measures domain shift, not the architecture. Leave empty
+        # until one exists; the number that matters is in the store's metadata
+        # either way, and make_figures warns when the two disagree.
+        checkpoint: ""
+        # The pu0 working point (0.5 / 0.2) is a MEASUREMENT on pu0 -- the object
+        # threshold of 0.2 bought ~25% relative efficiency at flat purity there --
+        # and there is no reason it transfers. Re-derive it with
+        # `scripts.scan_working_points` on the pu200 store before quoting any
+        # pu200 number, and record the result here.
+        mask_threshold: 0.5
+        object_threshold: 0.2
+
+      # clue.search is deliberately NOT overridden yet.
+      #
+      # `rho_c` is a local energy density in units of raw cell energy, and pileup
+      # raises the occupancy that density is measured over, so the pu0 ranges are
+      # the wrong box almost by definition -- but by how much is a measurement,
+      # not a guess, and inventing a range here would be exactly the "one
+      # arbitrary algorithm" failure the pu0 ranges were widened to avoid.
+      #
+      # The procedure instead: run `scripts.tune_clue` with the pu0 ranges and
+      # read the edge warnings. `tune_subsystem` reports any optimum landing in
+      # the outer 5% of its log range, which is the same signal that drove the
+      # pu0 ranges to their second iteration. Widen in the direction it names,
+      # re-run, and paste the settled ranges into an `overrides.clue.search`
+      # block here once they no longer press against a bound.
 
 # --- Detector subsystems ----------------------------------------------------
 # The calorimeter is read out as four subsystems, identified in the store by the
@@ -50,19 +124,19 @@ detectors:
   - hce
 
 # --- Event windows ----------------------------------------------------------
+# Per dataset, under `dataset.<name>.windows`, because pu0 and pu200 are
+# different files with different event numbering and no reason to line up.
+#
 # `eval` produces every number that appears in the report. It sits outside the
 # training range of every checkpoint trained so far, which the event-store reader
-# asserts rather than trusts.
+# asserts rather than trusts -- so the numbers here are a convenience, and the
+# store's own `event_window` metadata is the authority.
 #
 # CLUE tunes on a separate, smaller window: an Optuna trial re-runs the full
 # pipeline over every event, and a seven-parameter search does not need
 # thousands. Tuning on the validation window mirrors how the MaskFormer's own
 # working point was chosen, so neither method is tuned on the reported events.
-windows:
-  eval_start: 20250
-  eval_events: 500
-  tune_start: 20000
-  tune_events: 50
+# src/config.py refuses to load a dataset whose two windows overlap.
 
 # --- Hit selection ----------------------------------------------------------
 # Zero-suppression applied to the raw cells before either method sees the event.
@@ -266,6 +340,12 @@ clue:
 # clearly owns. `incidence_restrict_to_mask` is a CONTROL, not a working point -- it forces
 # the winner to be a query whose mask also claims the cell, which separates "assigns detected
 # cells better" from "reaches cells the mask head gave to nobody".
+#
+# `checkpoint` is informational: the authoritative record of which weights produced a
+# store is inside the store's own metadata, and `make_figures` warns when the two names
+# disagree rather than trusting either. It is a per-dataset value -- see
+# `dataset.pu200.overrides.maskformer` -- because a pu0-trained model evaluated on pu200
+# measures domain shift rather than the architecture.
 maskformer:
   checkpoint: /home/xucapfwi/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260802-T234016/ckpts/epoch=003-val_loss=18.06191.ckpt
   mask_threshold: 0.5

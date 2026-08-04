@@ -46,7 +46,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.config import RESULTS_DIR, settings, store_expectations, store_path
+from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.evaluation.soft import score_event_soft, sharing_diagnostics
 from src.io.event_store import EventStore
 
@@ -60,10 +60,13 @@ THRESHOLD_SCAN = (0.02, 0.03, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--events", type=int, default=200)
-    parser.add_argument("--out", type=Path, default=RESULTS_DIR / "soft_threshold_scan.parquet")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="defaults to results/<active dataset>/soft_threshold_scan.parquet")
     args = parser.parse_args()
 
     cfg = settings()
+    out_path = args.out or (results_dir() / "soft_threshold_scan.parquet")
+    print(describe())
     wp = cfg["metrics"]["working_points"][0]
     nominal = cfg["maskformer"]["mask_threshold"]
     object_threshold = cfg["maskformer"]["object_threshold"]
@@ -110,9 +113,9 @@ def main() -> None:
         )
 
     scan = pd.DataFrame(rows)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    scan.to_parquet(args.out, index=False)
-    print(f"\nwrote {args.out}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    scan.to_parquet(out_path, index=False)
+    print(f"\nwrote {out_path}")
 
     best = scan.loc[scan["eff_soft_mean"].idxmax()]
     at_nominal = scan[scan["nominal"]]

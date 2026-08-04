@@ -23,33 +23,45 @@ from them.
 
 ```
 config/experiment.yaml   every shared decision, and the expectations checked against the store
-src/config.py            loads and validates the experiment definition
+src/config.py            loads, merges and validates the experiment definition
 src/io/event_store.py    reads the event store; validates it against the config
 src/clue/                the CLUE baseline and its hyperparameter search
 src/evaluation/          matching, metrics and differential binning - shared by both methods
 src/plotting/            figure generation
+src/maskformer/          the learned model: training config, the trained weights, and the dump
+                         that writes an event store. Needs hepattn and a GPU; see below
 scripts/                 command line entry points
 tests/                   scorer identity tests and the CLUE periodic-metric regression
-results/                 pooled parquet tables
-figures/                 generated figures
-model/                   the learned model: training config, the dump that writes an event
-                         store, and the trained weights. NOT imported by src/ -- see below
+results/<dataset>/       pooled parquet tables, one directory per pileup condition
+figures/<dataset>/       generated figures, likewise
+attic/                   superseded code, kept for its decisions and imported by nothing
 ```
 
-Note the asymmetry between `src/clue/` and `model/`. CLUE is a module this repository imports
-and calls; the MaskFormer is not, because it needs `hepattn`, a GPU and the raw dataset. It
-lives outside `src/` so that `src/` keeps its defining property of importing nothing but numpy,
-scipy, pandas and matplotlib, and the two meet only at the event store. `model/README.md`
-covers what the model is, how it was trained, and which parts of it are mine.
+Two things about that layout are load-bearing.
+
+**`src/maskformer/` is the only part that needs a GPU**, and the rest of `src/` imports
+nothing but numpy, scipy, pandas and matplotlib. Those two halves are kept apart by nothing
+importing across the line, not by which directory they sit in:
+
+```bash
+grep -rn "src\.maskformer" --include="*.py" src scripts tests   # returns nothing
+```
+
+The model's files import `hepattn.experiments.colliderml.*` and never `src.*`, so neither
+side can reach the other even by accident. They meet only at the **event store**, which one
+writes and the other reads — and `src/io/event_store.py` is a hand-written *mirror* of the
+format module rather than an import of it, so a format change fails loudly on a version check
+instead of being silently misread. `src/maskformer/README.md` covers what the model is, how it
+was trained, and which parts of it are mine.
+
+**Everything a run writes is scoped by dataset.** `results/pu0/` and `results/pu200/` are
+separate directories chosen by `dataset.active`, because the tables are read back by name and
+a second pileup condition writing beside the first would replace it — and then `make_figures`
+would draw one panel from two experiments with nothing looking wrong.
 
 `src/evaluation/` never learns which method produced a clustering. It takes a label per cell
 plus the truth partition and returns numbers, so both pipelines are scored by identical code
 rather than by two implementations that are meant to agree.
-
-The producer of the event store lives in the `hepattn` repository, at
-`src/hepattn/experiments/colliderml/eval/`. It is the only GPU-dependent part of the
-analysis. `src/io/event_store.py` is a deliberate hand-written *mirror* of its format module
-rather than an import of it, which is what keeps the dependency boundary where it is.
 
 ## Installation
 
@@ -77,28 +89,72 @@ apptainer exec --nv --bind /home/xucapfwi/ColliderML_data ~/ubuntu22.sif \
   <checkpoint> --start-event 20250 --num-events 500 --out ~/eventstore
 ```
 
-or, on the cluster, via `slurm/calo_dump_eventstore.sh` in the hepattn experiment directory.
-A store costs roughly 320 kB per event: about 160 MB for the 500-event evaluation window.
+or, on the cluster, via `src/maskformer/hepattn_colliderml/slurm/calo_dump_eventstore.sh`.
+A pu0 store costs roughly 320 kB per event: about 160 MB for the 500-event evaluation window.
 
 Point `dataset.pu0.store` and `dataset.pu0.tune_store` at the results.
 
 ## Running
 
-All scripts run from the repository root as modules:
+All scripts run from the repository root as modules. Every one of them prints which dataset
+it resolved to before doing anything, and reads and writes that dataset's directories:
 
 ```bash
+python -m scripts.show_config                        # what the active dataset resolved to
 python -m scripts.tune_clue                          # Optuna search, one study per subsystem
 python -m scripts.score --algo maskformer            # score the model, mask head
 python -m scripts.score --algo maskformer_incidence  # same model, incidence head; see Two heads
-python -m scripts.score --algo clue --params results/clue_parameters.json
+python -m scripts.score --algo clue                  # picks up this dataset's tuned parameters
 python -m scripts.score --algo oracle_geometric      # reference clusterings; see Metrics
 python -m scripts.score --algo oracle_resolution
 python -m scripts.score_soft                         # multi-owner capability study
+python -m scripts.scan_working_points                # the efficiency/purity trade-off curve
 python -m scripts.scan_soft_threshold                # soft metric vs mask threshold
 python -m scripts.make_figures                       # every figure, from the tables alone
 ```
 
 `make_figures` is the only one an assessor needs; it touches no checkpoint and no dataset.
+
+## Running the other pileup condition
+
+`dataset.active` in `config/experiment.yaml` is the only switch. Setting it to `pu200`
+changes four things at once, which is the point — the alternative is remembering four:
+
+- **the stores**, from `dataset.pu200.store` / `.tune_store`
+- **the output directories**, to `results/pu200/` and `figures/pu200/`, so nothing can land
+  on top of the pu0 tables and no figure can mix the two
+- **anything under that dataset's `overrides:` block**, deep-merged over the shared settings
+  before any consumer sees them. Everything outside `dataset:` is the value *measured at pu0*;
+  a value that has to differ at pu200 goes in the override block rather than being edited in
+  place, or the other condition silently changes with it
+- **the Optuna study names**, which carry the dataset, so a `--storage` run cannot resume the
+  wrong condition's trials and report them as its answer
+
+The order to work in, and what each step is waiting on:
+
+1. **Dump the two stores.** `src/maskformer/README.md` has the command and the three settings
+   that need deciding for pu200 (`OUT`, `CHUNK`, and leaving `INCIDENCE_TOP_K` alone).
+2. **Fill in `dataset.pu200`** — the two store paths and the four window numbers — then run
+   `python -m scripts.show_config` and read it back. The store validates its own metadata
+   against the config on open, so a mismatch stops the run rather than shifting the numbers.
+3. **Tune CLUE, and read the warnings before the result.** `rho_c` is a local energy density
+   and pileup moves the density it is measured over, so the pu0 search ranges are the wrong
+   box almost by definition. `tune_subsystem` reports any optimum landing in the outer 5% of
+   its log range; widen the named range under `dataset.pu200.overrides.clue.search` and re-run
+   until nothing presses against a bound. A baseline tuned in the wrong box is under-tuned,
+   which is the one way this comparison can be unfair to CLUE.
+   `--events` is the memory knob: every trial re-runs over every tuning record and they are
+   all held decoded, so the cost scales with total cells rather than with events.
+4. **Re-derive the MaskFormer working point** with `scripts.scan_working_points`. The 0.5/0.2
+   pair is a pu0 measurement — the object threshold of 0.2 bought ~25% relative efficiency at
+   flat purity *there* — and nothing says it transfers.
+5. **Score and plot** exactly as above.
+
+One thing to settle before quoting a head-to-head: **the checkpoint is pileup-0**. Running it
+on pu200 measures how far the model transfers across pileup conditions, which is a real
+result but a different one from how the architecture compares to CLUE. The config keeps the
+checkpoint under `dataset.pu200.overrides.maskformer` so the pu200 run has to name its own
+rather than inheriting this one by silence.
 
 ## The figures
 
@@ -141,7 +197,7 @@ Four figures were removed rather than restyled:
 - `multiowner_capability` and `soft_threshold_scan` were each one number and one flat line
   respectively: 0.56 of otherwise-unreachable particles recovered against CLUE's 0.007, and
   "the over-division survives every threshold". Both are sentences, and both are in this
-  README and in `results/capability_summary.csv`. `scripts.score_soft` and
+  README and in `results/pu0/capability_summary.csv`. `scripts.score_soft` and
   `scripts.scan_soft_threshold` still write their tables.
 
 ## The experiment definition
@@ -369,7 +425,7 @@ Read it with two things in mind:
   trend -- hit-counted falls with particle energy (0.36 to 0.16) while energy-weighted rises
   (to 0.53). The hit-counted fall is the `n_frag` blind spot biting hardest on the most
   fragmented particles, so reporting it would have supported the opposite conclusion.
-  `figures/weighting_comparison.pdf` shows both definitions side by side.
+  `figures/pu0/weighting_comparison.pdf` shows both definitions side by side.
 - Matching applies a **relative floor** (`metrics.min_overlap_frac`), so a pair must share at
   least 5% of the smaller of the two totals. Without it a single shared 1 MeV cell counted as
   a match, which made the fake rate close to vacuous; applying it roughly triples the measured
@@ -413,3 +469,15 @@ Deferred. 46% of the calorimeter energy comes from particles below the 0.5 GeV t
 MaskFormer jets would be missing that energy by construction while CLUE's would not, and the
 resulting plot would measure the target definition rather than either algorithm. The
 decisions already taken are recorded under `jets:` in the config so they are not relitigated.
+
+The implementation is in `attic/jets.py`, where it does not run: it was written against the
+raw parquet loader, which the event store replaced. Reviving jets means rewriting it against
+`src/io/event_store.py`, not repairing it in place.
+
+## `attic/`
+
+Four modules from the design before the event store, when each method opened the raw
+ColliderML parquet and applied the shared cuts itself. None of them imports — they call
+`src.config.dataset_paths` and `src.config.split_bounds`, which no longer exist — and nothing
+live references them. They are kept because the decisions inside them are still open even
+though the code is not; `attic/README.md` says which is which.
