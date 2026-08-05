@@ -76,6 +76,9 @@ class ColliderMLDataset(Dataset):
         particle_min_num_calohits: int = 0,
         event_max_num_particles: int | None = None,
         calohit_min_energy: float = 0.0,
+        # Drop calo cells outside |eta|, i.e. restrict the event to a detector region. 0 disables
+        # it, which is the pu0 behaviour. Added for pileup-200: see _apply_calohit_eta_cut.
+        calohit_max_abs_eta: float = 0.0,
         calohit_truth_filter: bool = False,
         calohit_loss_weight_power: float = 0.0,
         calohit_loss_weight_clip: float = 10.0,
@@ -182,6 +185,7 @@ class ColliderMLDataset(Dataset):
         # Zero-suppression: drop calo cells with total_energy below this threshold (mostly noise).
         # 0 disables it. Applied to inputs and the truth mask consistently in _add_calohits.
         self.calohit_min_energy = float(calohit_min_energy)
+        self.calohit_max_abs_eta = float(calohit_max_abs_eta)
         # Diagnostic truth hit filter — see _add_calohits. Drops hits not on any valid target
         # particle, emulating a perfect trained filter (the trackml two-stage recipe).
         self.calohit_truth_filter = bool(calohit_truth_filter)
@@ -866,6 +870,10 @@ class ColliderMLDataset(Dataset):
         # (measured at 8.6% of targets with a 1e-3 threshold) - unreconstructable by construction,
         # but still counted in the efficiency denominator.
         calohits = self._apply_calohit_energy_cut(calohits)
+        # Region cut after the energy cut: both are pure subsets of the cell list, so the order
+        # does not change the result, and both must precede the particle_min_num_calohits filter
+        # so that "how many cells does this particle leave" is counted over cells that SURVIVE.
+        calohits = self._apply_calohit_eta_cut(calohits)
         self._debug(f"read calohits in {perf_counter() - t_calo_read:.3f}s")
         return calohits
 
@@ -876,6 +884,45 @@ class ColliderMLDataset(Dataset):
 
         energy = ak.to_numpy(calohits["total_energy"]).astype(np.float32, copy=False)
         return self._subset_calohit_record(calohits, energy >= self.calohit_min_energy)
+
+    def _apply_calohit_eta_cut(self, calohits: ak.Record) -> ak.Record:
+        """Keep only calo cells within |eta|, i.e. restrict the event to a detector region.
+
+        No-op when the threshold is 0, which is what pu0 runs with.
+
+        This exists because pileup-200 does not fit otherwise. A pu200 event carries ~532k cells
+        against ~22k at pu0, and MaskFormer's memory goes as num_queries x num_hits, so a faithful
+        pu200 event is ~200x the pu0 footprint on a card that already OOMs at 4x.
+
+        Cutting in eta is the one way of shrinking that which does not distort the task. Raising
+        calohit_min_energy removes cells but leaves the target particles untouched, so the fraction
+        of cells owned by a target collapses (measured: 2.5% against pu0's ~37%) and the mask loss
+        is then minimised by predicting empty everywhere -- which is exactly what happened, a run
+        with flat validation loss for seven epochs. Cutting in eta removes cells and targets
+        together, so the ratio is preserved: measured 38.1% owned at |eta| < 0.88, with 15.4 hits
+        per target against pu0's 13.
+
+        0.88 is not arbitrary -- it is where the barrel ends. The HCAL barrel reaches r = 3441 with
+        |z| <= 3450, so a track steeper than eta = 0.883 leaves through the barrel end before the
+        outer radius and deposits the rest of its shower in the endcap. Cutting there means every
+        particle in the sample is fully contained, rather than the model being asked to reconstruct
+        showers whose energy is partly in cells that were removed. The endcaps start well outside
+        it (ece at eta ~ 1.55, hce at ~ 1.24), so nothing straddles the boundary.
+
+        Set data.particle_max_abs_eta to the same value: this cut alone would leave target
+        particles whose cells have been removed.
+        """
+        if self.calohit_max_abs_eta <= 0.0:
+            return calohits
+
+        x = ak.to_numpy(calohits["x"]).astype(np.float32, copy=False)
+        y = ak.to_numpy(calohits["y"]).astype(np.float32, copy=False)
+        z = ak.to_numpy(calohits["z"]).astype(np.float32, copy=False)
+        # arctanh(z / |r|), matching how the cell eta feature itself is built above.
+        norm = np.sqrt(x * x + y * y + z * z)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            eta = np.arctanh(np.clip(np.divide(z, np.where(norm == 0.0, 1.0, norm)), -0.999999, 0.999999))
+        return self._subset_calohit_record(calohits, np.abs(eta) <= self.calohit_max_abs_eta)
 
     def _build_particle_num_calo_hit_fields(self, particle_ids: torch.Tensor, calohits: ak.Record) -> dict[str, torch.Tensor]:
         particle_calohit_indptr, particle_calohit_indices, _ = self._build_particle_calohit_csr(particle_ids, calohits)

@@ -50,6 +50,6 @@ PY
 
 exec "$PYTHON" main.py fit \
     --config configs/calo_clustering.yaml \
-    --config configs/overlay_pu200.yaml \
+    --config "configs/${OVERLAY:-overlay_pu200_barrel.yaml}" \
     --data.pin_memory false \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}

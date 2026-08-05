@@ -33,7 +33,7 @@ START=$(date +%s)
 
 "$PYTHON" main.py fit \
     --config configs/calo_clustering.yaml \
-    --config configs/overlay_pu200.yaml \
+    --config "configs/${OVERLAY:-overlay_pu200_barrel.yaml}" \
     --data.num_train "$EVENTS" \
     --trainer.max_epochs 1 \
     --trainer.limit_val_batches 0 \
