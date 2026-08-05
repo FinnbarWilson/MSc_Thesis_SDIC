@@ -2,6 +2,13 @@
 # version of this file: git show ba0319c:src/maskformer/hepattn_colliderml/configs/calo_clustering.yaml
 name: ColliderML_Calo_Clustering
 
+# Fixed, because this config is now one arm of an ablation rather than a one-off run. The incidence
+# head is off and the mask objective is simplified; both of those are meant to be compared against
+# a run with them on, and an unseeded comparison confounds the change with the initialisation. Any
+# fixed value works -- what matters is that the arms share it. LightningCLI seeds randomly if this
+# is absent, so leaving it out is not "no seed", it is "an unrecorded seed".
+seed_everything: 42
+
 data:
   train_dir: /home/xucapfwi/ColliderML_data/ttbar_pu0/
   val_dir: /home/xucapfwi/ColliderML_data/ttbar_pu0/
@@ -46,17 +53,30 @@ data:
 
 trainer:
   max_epochs: 4
-  # Sum gradients over 4 events, then take one optimiser step: the statistical benefit of batch 4
-  # at the memory cost of batch 1 (batch 4 OOMs an 80GB A100 at ~22k hits/event). Lion uses only
-  # the SIGN of the gradient, which is too noisy at batch 1. Divides optimiser steps by 4, which is
-  # why lrs_config.max below is raised to match - the two settings are only valid together.
-  accumulate_grad_batches: 4
+  # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
+  # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
+  # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
+  # same walltime, which is the point.
+  #
+  # THIS IS COUPLED TO lrs_config.max. That value was sqrt(4)-scaled to compensate for accumulating;
+  # with accumulation off, the scaling is no longer what justifies it -- see the note there. Do not
+  # change one of these without rereading the other.
+  accumulate_grad_batches: 1
   accelerator: gpu
   devices: 1
   precision: bf16-mixed
   log_every_n_steps: 10
   default_root_dir: logs
-  gradient_clip_val: 0.1
+  # 1.0, was 0.1. THIS HAD TO MOVE WITH THE OPTIMISER and is the likeliest thing to have silently
+  # ruined the run if left alone. Lion's update is the sign of the gradient, so its raw gradient
+  # norms sat in a range where 0.1 was a sane ceiling. AdamW does not bound its update that way and
+  # its gradient norms here are expected to be O(1), so a 0.1 clip would rescale essentially EVERY
+  # step -- which silently replaces the OneCycle schedule with "constant tiny step", and shows up as
+  # a loss curve that flattens early for no visible reason rather than as an error.
+  #
+  # hepattn logs no gradient norm anywhere, so this cannot be confirmed from the run as configured.
+  # If the loss does flatten early, that is the first thing to instrument.
+  gradient_clip_val: 1.0
   enable_progress_bar: true
   val_check_interval: 0.25
 
@@ -89,16 +109,31 @@ trainer:
         refresh_rate: 10
 
 model:
-  optimizer: lion
+  # AdamW, was Lion. Lion's sign-only update is what forced accumulate_grad_batches: 4 above; AdamW
+  # is better behaved at batch 1, which is the whole reason the accumulation could be dropped.
+  optimizer: adamw
 
   lrs_config:
     initial: 1e-5
-    # 1e-4, sqrt(4)-scaled from 5e-5 to compensate for accumulate_grad_batches: 4 above. Only valid
-    # together with it - 1e-4 thrashed and 1.5e-4 diverged at batch 1.
+    # 1e-4. Reached here by two different routes that happen to agree: it was previously the
+    # sqrt(4) scaling of 5e-5 for accumulate_grad_batches: 4, and it is also the recommended AdamW
+    # starting point for this setup. The earlier finding that "1e-4 thrashed and 1.5e-4 diverged at
+    # batch 1" was measured under LION at batch 1 and does NOT transfer to AdamW.
+    # If 1e-4 turns out to underfit, 5e-4 is the next value to try.
     max: 1e-4
     end: 1e-6
+    # Unchanged at 0.01, but it now means something different and the new meaning is better.
+    # OneCycleLR is sized from TOTAL optimiser steps, and dropping accumulation multiplied those by
+    # 4 (20k events x 4 epochs = ~80k steps, was ~20k). So warmup went from ~200 steps to ~800 for
+    # free, which is the right direction for AdamW at batch 1.
     pct_start: 0.01
     skip_scheduler: false
+    # Left at 1e-5 ON PURPOSE, despite AdamW's usual 1e-2. Lion convention is a weight decay several
+    # times LARGER than AdamW's for the same regularisation, so 1e-5 under Lion was already almost
+    # no decay, and the matching AdamW value is smaller still. Raising it to a conventional AdamW
+    # default here would be a real change in regularisation landing in the same run as the optimiser
+    # swap, the objective change and the head removal -- one confound too many. Change it on its own
+    # later if the model overfits, which at 4 epochs over 20k events it currently does not.
     weight_decay: 1e-5
 
   mtl: false
@@ -196,15 +231,22 @@ model:
                 losses:
                   object_bce: 1.0
                 costs:
-                  object_bce: 1.0
+                  object_bce: 0
                 dim: *dim
                 null_weight: 1.0
                 mask_queries: false
                 has_intermediate_loss: true
                 has_first_layer_loss: false
                 # A true particle only counts as reconstructed if its matched query is also accepted
-                # here, and the default is an argmax at 0.5. Swept post-hoc: 0.2 gave +25% relative
-                # efficiency at flat purity. Affects prediction and metrics only, not the loss.
+                # here, and the default is an argmax at 0.5. Affects prediction and metrics only,
+                # never the loss, so it is safe to leave wrong during training and fix afterwards.
+                #
+                # 0.2 IS NOW STALE. It came from a post-hoc sweep (+25% relative efficiency at flat
+                # purity) against the OLD objective -- dice 5 + focal 20, with the incidence head
+                # attached. Both are gone, and the mask head's calibration is exactly what a focal
+                # term changes, so there is no reason the same operating point survives. Left at 0.2
+                # rather than reset to 0.5 only because neither is justified until it is re-swept:
+                # scripts/sweep_pred_threshold.py, on this run's checkpoint, before quoting numbers.
                 eval_threshold: 0.2
 
             - class_path: hepattn.models.task.ObjectHitMaskTask
@@ -214,43 +256,40 @@ model:
                 input_object: query
                 output_object: flow
                 target_object: particle
+                # SIMPLIFIED BASELINE. Was dice 5.0 + focal 20.0 in both losses and costs. The
+                # point of this configuration is to find out what the plain objective does before
+                # any of the weighting is re-added: equal-weighted DICE and BCE, no focal term.
                 losses:
-                  mask_dice: 5.0
-                  mask_focal: 20.0
+                  mask_dice: 1.0
+                  mask_bce: 1.0
+                # DICE only. Matching decides WHICH query owns a target, and dropping focal from the
+                # cost leaves one term deciding that, which is easier to reason about when the
+                # result moves. Note there is no `mask_bce` entry in loss.py's cost_fns at all, so
+                # BCE could not be a cost here even if wanted -- naming it would raise a KeyError.
                 costs:
-                  mask_dice: 5.0
-                  mask_focal: 20.0
+                  mask_dice: 1.0
                 null_weight: 1.0
                 dim: *dim
 
-            # Third head, not in the tracking configs. Predicts I_ia = E_ia/E_i, the fraction of
-            # each cell's energy belonging to each particle (softmax over particles). Energy
-            # conserving by construction, and unlike the binary mask above it can represent a cell
-            # shared between several particles - 12.6% of our hits. Ported from experiments/clic.
-            - class_path: hepattn.models.task.IncidenceRegressionTask
-              init_args:
-                name: incidence
-                input_constituent: calohit
-                input_object: query
-                output_object: flow
-                target_object: particle
-                # 100, not clic's 1.0: kl_div is mean-reduced over the whole [particles x hits]
-                # matrix and ours is ~50x sparser, so at 1.0 it contributed ~0.011 against a total
-                # of ~28, i.e. nothing.
-                losses:
-                  kl_div: 100.0
-                # Supervises the loss but is deliberately not a matching cost: kl_div_cost builds a
-                # [queries x particles x hits] tensor, which is 86 GB here and OOMs instantly.
-                costs: {}
-                net:
-                  class_path: hepattn.models.Dense
-                  init_args:
-                    input_size: *dim
-                    activation: torch.nn.SiLU
-                    hidden_layers: 2
-                node_net:
-                  class_path: hepattn.models.Dense
-                  init_args:
-                    input_size: *dim
-                    hidden_layers: 1
-                has_intermediate_loss: false
+            # THE INCIDENCE HEAD IS DELIBERATELY ABSENT HERE, and this is the ablation half of the
+            # simplified baseline above: one object-classification head and one mask head, nothing
+            # else. It predicted I_ia = E_ia/E_i, the fraction of each cell's energy belonging to
+            # each particle, supervised with kl_div at weight 100 against the target built in
+            # data.py from contrib_particle_ids/contrib_energies.
+            #
+            # It is worth knowing what removing it does and does not do:
+            #   - It does NOT change the clustering path. The head was never in the matching cost
+            #     (kl_div_cost is a [queries x particles x hits] tensor, ~86 GB here) and nothing
+            #     downstream consumed its output, so cluster membership came from the mask head
+            #     either way. What is lost is the auxiliary gradient it put on the shared trunk.
+            #   - It DOES remove the only representation of a shared cell in the model. ~12.6% of
+            #     cells have more than one contributing particle and the binary mask target cannot
+            #     express that. eval/dump.py then writes width-0 mf_incidence arrays and sets
+            #     maskformer.has_incidence false, so the store stays readable and the soft study
+            #     simply has no MaskFormer side; truth_incidence is unaffected.
+            #   - It frees the dense [n_particles x n_hits] float32 target, ~88 MB/event at pu0.
+            #
+            # To restore it, take the block from git: the last version with it is
+            #   git show ee21566:src/maskformer/hepattn_colliderml/configs/calo_clustering.yaml
+            # It is also still present in overlay_metric_aligned.yaml, which restates the whole
+            # task list -- so applying THAT overlay puts the head back regardless of this file.

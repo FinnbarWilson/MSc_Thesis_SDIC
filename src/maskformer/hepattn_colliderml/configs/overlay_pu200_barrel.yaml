@@ -3,6 +3,18 @@
 #   main.py fit --config configs/calo_clustering.yaml --config configs/overlay_pu200_barrel.yaml
 #
 # Rationale and measurements: ../../ce_ai_1/PU200_STATUS.md
+#
+# INHERITED FROM calo_clustering.yaml, NOT RESTATED HERE. This overlay does not touch `tasks`,
+# `optimizer` or `accumulate_grad_batches`, so it picks up the simplified baseline that file now
+# defines: AdamW at max lr 1e-4, accumulate_grad_batches 1, no incidence head, and a mask head with
+# mask_dice = mask_bce = 1.0 in the loss and mask_dice = 1.0 alone in the cost. That is deliberate --
+# the pu0 and pu200 runs are meant to differ only in the data, so the objective is defined in one
+# place. Contrast overlay_metric_aligned.yaml, which restates the whole task list and therefore
+# reintroduces the incidence head and the focal term if applied.
+#
+# The eta cut below is the "new cut at pu200" half of that plan: pu0 keeps the full event
+# (calo_clustering.yaml stays at calohit_min_energy 2e-4 with no eta restriction), and the
+# containment argument for restricting the sample is made here, at pu200, where it is needed.
 
 data:
   train_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
@@ -33,8 +45,43 @@ data:
   test_start_event: 6250
 
 trainer:
-  max_epochs: 7
-  max_time: "00:23:30:00"
+  # 3, was 7. SEVEN WAS AN UNSIZED PLACEHOLDER inherited from overlay_pu200.yaml, whose schedule was
+  # measured for a DIFFERENT configuration (500 queries at calohit_min_energy 1e-3). PU200_STATUS.md
+  # §8 flags it as "still a placeholder"; this is that number being set.
+  #
+  # Sized from external/benchmark_barrel.log: 0.36 events/s over 200 events. De-rated by 41%, not
+  # the 25% that log assumes -- PU200_STATUS.md §6 measured the real pu200 penalty at -41% (0.98 ->
+  # 0.58) because a decoded pu200 shard is 4.0 GB and data.py's 8-row-group cache holds far less of
+  # the working set than in a 2-shard benchmark. The barrel eta cut shrinks the event AFTER decode,
+  # so it does not reduce that penalty.
+  #
+  #   0.36 x 0.59 = 0.21 ev/s  ->  6000/0.21 = 7.9 h + ~7 min validation  ->  ~8.0 h/epoch
+  #
+  # THAT ESTIMATE WAS WRONG AND 3 WAS ALSO TOO MANY. Measured on the real run (2026-08-05, 230
+  # steps in 25m00s): 0.153 it/s, and DECLINING -- 0.18 at step 10, 0.17 at step 60, 0.15 at step
+  # 230. The benchmark climbed over the same range (0.14 -> 0.36) because its 2-shard working set
+  # fitted the cache; the real run walks into fresh shards and never does. So the penalty here is
+  # -58%, not the -41% measured for the non-barrel config, and it arrives as a downward drift
+  # rather than a fixed discount.
+  #
+  #   0.153 it/s -> 10.87 h train + 0.72 h validation (4 x 250 events) = 11.6 h/epoch
+  #   2 epochs = 23.2 h   (fits the 28 h wall with margin for further decay)
+  #   3 epochs = 34.8 h   (would truncate OneCycle mid-epoch-3)
+  #
+  # TWO IS NOT A WEAKER SCHEDULE THAN THE OLD ONE. accumulate_grad_batches is now 1, so 2 epochs
+  # over 6000 events is 12,000 optimiser steps, against the 10,500 the previous 7-epoch/accum-4
+  # plan would have taken. Fewer passes, more steps.
+  #
+  # THE LESSON, AGAIN: PU200_STATUS.md §6 says treat any short-benchmark rate as an upper bound.
+  # De-rating it by a penalty measured on a DIFFERENT config was still too optimistic. Size from a
+  # few hundred steps of the real run before committing, which is what this number now is.
+  max_epochs: 2
+
+  # 28 h, raised from 23:30 to cover the pessimistic end of the range above. This machine has no
+  # queue and no scheduler walltime (ce_ai_1/env.sh: "no walltime cap here"), so this is purely a
+  # runaway guard and costs nothing to widen. It should NOT trigger; if it does, the throughput
+  # estimate is wrong and that is a sizing bug to fix rather than a normal ending.
+  max_time: "01:04:00:00"
 
   logger:
     init_args:
