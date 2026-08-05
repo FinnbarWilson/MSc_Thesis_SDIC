@@ -52,7 +52,24 @@ data:
   return_tracks: false
 
 trainer:
-  max_epochs: 4
+  # 7, was 4. SIZED FROM A MEASUREMENT, NOT CHOSEN: dias/benchmark_calo_clustering.sh measured
+  # 1.94 events/s for this configuration on DIAS with 32 CPUs / 24 dataloader workers (job 48245),
+  # which is 2.91 h per epoch at num_train=20000 including validation. 7 x 2.91 = 20.4 h, which is
+  # the run length asked for. 6 would be 17.5 h and 8 would be 23.3 h.
+  #
+  # THE POINT IS THE OPTIMISER STEPS, NOT THE PASSES. overlay_long_schedule.yaml sets out the
+  # evidence that this model is step-starved rather than data-starved: two runs at ~20,000 steps
+  # reached nearly the same validation loss despite 6.7x different data volumes, and run 48169's
+  # loss was still falling at its final checkpoint. At accumulate_grad_batches 1 this is
+  # 7 x 20000 = 140,000 optimiser steps, against 80,000 at 4 epochs and the 20,000 that diagnosis
+  # was made on.
+  #
+  # RESIZE THIS AND THE WALLTIME TOGETHER. OneCycleLR is sized from total steps, so a schedule that
+  # does not complete leaves its final checkpoint at a high learning rate -- the waste described in
+  # overlay_long_schedule.yaml and ../ce_ai_1/PU200_STATUS.md §6. dias/train_calo_clustering.sh
+  # asks for 26 h against these 20.4, and stops cleanly at 25 h if the throughput estimate is
+  # wrong. If the epoch count changes, re-run the benchmark and move both numbers.
+  max_epochs: 7
   # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
   # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
   # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
@@ -124,8 +141,10 @@ model:
     end: 1e-6
     # Unchanged at 0.01, but it now means something different and the new meaning is better.
     # OneCycleLR is sized from TOTAL optimiser steps, and dropping accumulation multiplied those by
-    # 4 (20k events x 4 epochs = ~80k steps, was ~20k). So warmup went from ~200 steps to ~800 for
-    # free, which is the right direction for AdamW at batch 1.
+    # 4. At the 7 epochs set above that is 20k events x 7 = 140,000 steps, against ~20,000 under the
+    # old accumulate-4 / 4-epoch arrangement -- so warmup is ~1,400 steps where it was ~200. Warmup
+    # should scale with the run, which is why this stays a FRACTION rather than becoming an absolute
+    # count: re-sizing max_epochs then re-sizes the warmup for free.
     pct_start: 0.01
     skip_scheduler: false
     # Left at 1e-5 ON PURPOSE, despite AdamW's usual 1e-2. Lion convention is a weight decay several

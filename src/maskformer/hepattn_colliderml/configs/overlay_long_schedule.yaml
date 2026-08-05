@@ -1,73 +1,79 @@
-# Overlay: train the model for long enough to find out what it can do.
+# Overlay: train for longer than the default schedule, to find out where the curve actually flattens.
 #
 #   main.py fit --config configs/calo_clustering.yaml --config configs/overlay_long_schedule.yaml
+#   OVERLAYS=overlay_long_schedule.yaml sbatch src/maskformer/dias/train_calo_clustering.sh
 #
 # THE EVIDENCE THAT THE MODEL IS UNDERTRAINED, NOT SATURATED
 #
-# Run 48169 (4 epochs, 20000 events) never plateaued. Its checkpoints, in order:
+# Run 48169 (4 epochs, 20000 events, the old Lion / accumulate-4 configuration) never plateaued.
+# Its checkpoints, in order:
 #   22.77  21.22  20.46  20.02  19.65  19.45  19.27  18.97
 #   18.84  18.79  18.63  18.37  18.29  18.21  18.13  18.06
 # Validation loss was still falling at the final checkpoint. Training stopped because max_epochs
 # was 4, not because the model had stopped learning.
 #
 # The confirmation is a coincidence worth stating, because it separates "more data" from "more
-# optimisation". The previous run used 3000 events for 28 epochs; this one used 20000 for 4:
+# optimisation". The run before it used 3000 events for 28 epochs; that one used 20000 for 4:
 #   3000 x 28 / 4 accumulation  = 21,000 optimiser steps -> val_loss 18.26
 #   20000 x 4  / 4 accumulation = 20,000 optimiser steps -> val_loss 18.06
 # Nearly the same step count and nearly the same loss, despite 6.7x more unique data. Performance
 # is tracking OPTIMISER STEPS, and 20k of them is very few for a 10.4M-parameter set-prediction
-# model resolving 1000 queries. More data is not what is missing; more steps is.
+# model resolving 1000 queries. More data is not what was missing; more steps was.
 #
-# WHY accumulate_grad_batches IS LEFT AT 4
+# ---------------------------------------------------------------------------------------------
+# WHAT CHANGED, AND WHY THIS FILE IS MUCH SMALLER THAN IT WAS
 #
-# Raising it was considered and rejected on the arithmetic. Accumulation divides optimiser steps by
-# its own value, so at a fixed walltime going 4 -> 16 would have cut this run from 60k steps to 15k
-# -- fewer than the run being diagnosed as step-starved. The usual argument for raising it (Lion
-# uses only the SIGN of the gradient, so a noisy single-event gradient makes the model wander)
-# already motivated the move from 1 to 4, and there is no evidence 4 is insufficient: the loss
-# trajectory above is smooth and monotonic, with none of the thrashing seen at accumulation 1.
-# Leave it at 4 unless a run actually becomes unstable.
+# Most of the argument above has since been acted on in calo_clustering.yaml itself, so this
+# overlay no longer has to make it:
 #
-# THIS RUN DOES NOT FIT IN ONE JOB, AND THAT IS DELIBERATE
+#   accumulate_grad_batches 4 -> 1   the base config now takes a step per event, so a given number
+#                                    of passes is worth 4x the optimiser steps it used to be
+#   max_epochs 4 -> 7                sized from a measured 1.94 events/s on DIAS with 32 CPUs
+#                                    (dias/benchmark_calo_clustering.sh, job 48245)
 #
-# Measured end-to-end on job 48169: 4.92 h/epoch at num_train=20000 (1.13 events/s sustained, ~20%
-# slower than the 1.42 the previous sizing assumed -- use the measured figure). So:
-#     12 epochs x 4.92 h = ~59 h, against a 20 h walltime cap.
-# Run it as THREE sequential 20 h jobs, resuming each time:
-#     sbatch slurm/calo_clustering.sh                                     # job 1, epochs 0-3
-#     CKPT=logs/<run>/ckpts/<last>.ckpt sbatch slurm/calo_clustering.sh   # job 2, epochs 4-7
-#     CKPT=logs/<run>/ckpts/<last>.ckpt sbatch slurm/calo_clustering.sh   # job 3, epochs 8-11
-# (the script already forwards CKPT to --ckpt_path). Lightning restores the optimiser AND scheduler
-# state, so the OneCycle schedule below is sized once across all twelve epochs and the decay lands
-# in job 3 where it belongs.
+# The DEFAULT run is therefore already 7 x 20000 = 140,000 optimiser steps in ~20.4 h -- seven
+# times the 20,000 the diagnosis above was made on. This file is now only for going further still.
 #
-# THE FAILURE MODE TO AVOID. OneCycleLR is sized from TOTAL steps. A run that stops early never
-# reaches its decay phase, so its final checkpoint is taken at a high learning rate -- which is
-# exactly how the hit-filter run was wasted. If you only intend to run one or two jobs, LOWER
-# max_epochs to match, rather than letting a 12-epoch schedule be truncated at epoch 4. Equally, do
-# not compare a truncated run against a completed one; compare at equal steps or not at all.
+# IT NO LONGER RESTATES accumulate_grad_batches. The previous version pinned it at 4, which under
+# the current base config would QUARTER the optimiser steps -- the exact opposite of this file's
+# purpose, and silently, because a longer schedule at a quarter of the step rate still looks like a
+# longer schedule. An overlay whose job is to add steps must not touch the setting that divides
+# them.
+#
+# NOR IS IT SPLIT ACROSS JOBS ANY MORE. The old version ran as three sequential 20 h jobs against
+# what it believed was a 20 h walltime cap. The GPU partition's real cap is 4-00:00:00 (`scontrol
+# show partition GPU`), so 12 epochs at 2.91 h fits a single job with room to spare. If a run is
+# interrupted anyway, dias/train_calo_clustering.sh forwards CKPT= to --ckpt_path and Lightning
+# restores the optimiser AND scheduler state, so the OneCycle schedule stays sized across the whole
+# thing.
+#
+# THE FAILURE MODE TO AVOID, UNCHANGED. OneCycleLR is sized from TOTAL steps. A run that stops
+# early never reaches its decay phase, so its final checkpoint is taken at a high learning rate --
+# which is exactly how the hit-filter run was wasted. If the walltime cannot cover the schedule
+# below, LOWER max_epochs to match rather than letting it be truncated. Equally, do not compare a
+# truncated run against a completed one; compare at equal steps or not at all.
+# ---------------------------------------------------------------------------------------------
 
 trainer:
-  # 12 epochs x 20000 events / 4 accumulation = 60,000 optimiser steps, 3x run 48169's 20,000.
-  # Raise further if the walltime budget allows -- nothing measured so far suggests this is where
-  # the curve flattens, only that it is further along it than 20k.
+  # 12 x 20000 = 240,000 optimiser steps at accumulate_grad_batches 1, against the base config's
+  # 140,000 and run 48169's 20,000. At the measured 2.91 h/epoch that is ~34.9 h, so submit it with
+  # a wall to match and move MAX_TIME with it:
+  #   OVERLAYS=overlay_long_schedule.yaml MAX_TIME=00:44:00:00 \
+  #     sbatch --time=45:00:00 src/maskformer/dias/train_calo_clustering.sh
+  # Nothing measured so far says this is where the curve flattens, only that it is further along it
+  # than 20k. Raise it again if the budget allows -- and re-run the benchmark first if anything
+  # about the per-step cost has moved.
   max_epochs: 12
-
-  # Unchanged from calo_clustering.yaml, restated because the reasoning above depends on it and a
-  # reader should not have to hold two files in their head to check the step arithmetic.
-  accumulate_grad_batches: 4
 
 model:
   lrs_config:
     initial: 1.0e-5
-    # 1e-4 unchanged. It is a property of the batch statistics (accumulation 4), not of the run
-    # length, and it trained smoothly for 4 epochs -- which was the open question when it was
-    # raised from 5e-5, and is now answered.
+    # 1e-4, unchanged from calo_clustering.yaml. It is a property of the batch statistics and the
+    # optimiser, not of the run length.
     max: 1.0e-4
     end: 1.0e-6
-    # 0.01 of 60k steps = 600 warmup steps, against 200 in the 4-epoch run. Warmup should scale
-    # with the run, and a fraction does that automatically, which is why this stays a fraction
-    # rather than becoming an absolute count.
+    # A fraction, not an absolute count, so warmup scales with the schedule automatically:
+    # 0.01 of 240k steps is 2,400 warmup steps, against 1,400 at the base config's 7 epochs.
     pct_start: 0.01
     skip_scheduler: false
     weight_decay: 1.0e-5
