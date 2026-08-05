@@ -63,6 +63,9 @@ ulimit -n 65536 2>/dev/null || true
 # is in the wrong-sized blocks. expandable_segments lets it grow segments instead of hoarding
 # fixed-size ones. If a long run still OOMs, drop num_queries to 400 (measured max targets: 368)
 # before touching anything else.
+# torch 2.9 renamed this: it warns "PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF
+# instead". Set the new name, and keep the old one for anything older.
+export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # The cost functions are torch.compile'd. The venv has a real gcc (unlike the bare container on

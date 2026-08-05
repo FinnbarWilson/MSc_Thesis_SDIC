@@ -1,131 +1,55 @@
+# Calorimeter clustering on ColliderML. Measurements behind each choice are in the annotated
+# version of this file: git show ba0319c:src/maskformer/hepattn_colliderml/configs/calo_clustering.yaml
 name: ColliderML_Calo_Clustering
 
 data:
-  # ColliderML pu0 dataset. Directory layout is "<dataset_prefix>_<collection>",
-  # i.e. <root>/ttbar_pu0_particles and <root>/ttbar_pu0_calo_hits.
   train_dir: /home/xucapfwi/ColliderML_data/ttbar_pu0/
   val_dir: /home/xucapfwi/ColliderML_data/ttbar_pu0/
   test_dir: /home/xucapfwi/ColliderML_data/ttbar_pu0/
 
-  # Event process name in this directory layout
   event_type: ttbar
-  dataset_prefix: ttbar_pu0    # pu0 layout: "<dataset_prefix>_<collection>"
-  calo_only: true              # no tracker hits / tracks in pu0
+  dataset_prefix: ttbar_pu0
+  calo_only: true
 
-  # Scaled-up run. The 1000-event/30-epoch first run learned steadily but was undertrained (val
-  # loss + efficiency still rising at the end), so this uses more data and more epochs (see trainer).
-  # 3000 x 60 epochs ~= 180k steps ~= 26h at the observed ~8k steps/h, comfortably under the 2-day cap.
-  # ~1e6 events are available, so bump these (and the start offsets below) to scale further.
-  # batch_size stays 1. Benchmarked at ~22k hits/event: bs=1 gave 1.52 events/s, bs=2 gave 1.45
-  # events/s (no gain), bs=4 OOMed. The GPU is no longer the idle resource it was on the old
-  # 5k-hit config (17-54% util there) - one event of 1200 queries x ~22k hits across 4 decoder
-  # layers already saturates it. Dataloading is not the limit either (~24 events/s with 8 workers).
-  # Batching is implemented and correct (collate_calohit_batch), so raising this is worth revisiting
-  # if the sequence length is ever cut back.
   batch_size: 1
-  # Must match model.model.init_args.input_sort_field below. Only used when batch_size > 1: the
-  # collate function pads this field with an out-of-range sentinel so that padded tokens sort to the
-  # END of the encoder's attention windows. Padding it with 0 instead would drop padding into the
-  # middle of the physical range (phi and eta are both centred on 0) and fragment the windows of the
-  # smaller events in the batch.
   input_sort_field: phi
   num_workers: 10
-  # 20000 (was 3000). Measured throughput after the 4-layer/1000-query changes is 1.87 events/s,
-  # so 20000 x 13 epochs = 260k event-presentations ~= 39h, inside the 2-day cap with margin.
-  # That is ~3x the data volume of the previous full run. Still only 2% of the 1e6 available.
   num_train: 20000
-  # 250 (was 500) so validation can run twice per epoch for the same total cost - see
-  # val_check_interval. 250 events is still ~150k particles, statistically ample for these metrics.
   num_val: 250
   num_test: 500
 
-  # Disjoint splits: train/val/test all read the same directory, so we carve out non-overlapping
-  # event windows. train = [0, 3000), val = [3000, 3500), test = [3500, 4000). Keep these in sync
-  # with num_train/num_val above (val_start_event >= num_train, test_start_event >= num_train+num_val).
   train_start_event: 0
   val_start_event: 20000
   test_start_event: 20250
 
-  # Zero-suppression: drop calo cells below this energy. The old 1e-3 value was far too aggressive
-  # and was the main thing capping performance - it removed ~84% of hits and thereby:
-  #   - shredded clusters: median hits/particle 15 -> 4, with 18.5% of particles left holding 1 hit
-  #   - tripled truth ambiguity: multi-owner hits 8.8% -> 28.5% (it preferentially keeps the
-  #     high-energy cells where showers overlap), while the mask loss treats assignment as exclusive
-  #   - left 8.6% of target particles with an all-zero truth mask (also fixed in data.py by applying
-  #     this cut before the particle_min_num_calohits filter rather than after)
-  # 2e-4 keeps the clusters essentially intact (median 13 hits, 11.4% multi-owner) at ~22k hits/event
-  # vs ~28k with no meaningful cut. Raise back towards 5e-4 if this turns out not to fit in memory.
+  # Zero-suppression. 1e-3 removed ~84% of hits and shredded clusters (median hits/particle 15->4);
+  # 2e-4 keeps them intact at ~22k hits/event.
   calohit_min_energy: 2.0e-4
 
-  # Minimum pT for a particle to be deemed reconstructable in GeV
   particle_min_pt: 0.5
   particle_max_abs_eta: 4.0
 
-  # Silicon-hit based cuts are meaningless in calo-only mode (num_sihits is always 0,
-  # which would reject every charged particle). Leave hit cuts empty here.
   particle_hit_cuts: {}
 
-  # Whether to include charged / neutral particles as targets
   particle_include_charged: true
   particle_include_neutral: true
 
-  # Only particles that deposit at least this many calo hits are targets. This excludes
-  # neutrinos and other particles that leave no calo energy (which would be empty-mask queries).
-  # 3 (was 1): particles depositing only 1-2 calo hits are not reconstructable in practice, but they
-  # still sat in the efficiency denominator dragging the score down. Requiring >=3 hits drops
-  # ~15% of targets (569 -> 485 per event) while keeping 97.7% of the calorimeter energy.
-  # Their hits remain in the input as noise for the model to reject.
+  # Particles depositing 1-2 calo hits are not reconstructable but still sat in the efficiency
+  # denominator. Drops ~15% of targets, keeps 97.7% of the calorimeter energy.
   particle_min_num_calohits: 3
 
-  # Fixed particle-slot count per event. MaskFormer requires this to equal num_queries (below).
-  # Max particles-with-calo-hits observed was ~950, so 1200 leaves headroom; events exceeding it
-  # have surplus particles truncated.
-  # 1000 (was 1200). Measured over 40 events: mean 628 particles, p95 954, max 1200. 1000 covers
-  # almost every event while cutting the Hungarian solve (~30% cheaper at 1000^2 vs 1200^2) and the
-  # 1200 x ~22k mask attention. The rare busiest events lose their surplus particles to truncation.
+  # Must equal model...decoder.num_queries below.
   event_max_num_particles: &num_objects 1000
 
   return_calohits: true
   return_tracks: false
 
-# Training stuff here
 trainer:
-  # 28 epochs x 3000 events = 84k steps. Sized from measured throughput: the 2h test managed ~2200
-  # steps/h at ~22k hits/event (4x slower per step than the old 5k-hit runs), so 84k steps ~= 38h,
-  # inside the 2-day walltime cap with margin. Note epochs are NOT comparable across runs here -
-  # always compare at equal STEP counts (the 0.37 run took 180k steps).
-  # 10 epochs x 20000 events = 200k event-presentations = 50k optimiser steps (accumulation 4).
-  #
-  # Sized on the throughput MEASURED AT num_train=20000, which is 1.42 events/s — NOT the 1.89 seen
-  # at num_train=3000. The difference is the per-worker parquet cache (8 row groups): with 20 shards
-  # it misses ~60% of the time instead of ~0%. Using the 1.89 figure gave 13 epochs / "39h", which
-  # would actually have taken 53h and been killed at the 47h cap mid-cosine-decay.
-  # 10 epochs: (20000 train + 1000 val) x 10 = 210k events / 1.42 = ~41h, ~6h of margin.
-  # 4 epochs, sized for an ~18h run from MEASURED throughput (1.42 events/s at dim 256 with
-  # num_train=20000). Each epoch is 20000 train + 4x250 validation = 21000 events = 4.11h, so
-  # 4 epochs ~= 16.4h plus startup, inside the 20h walltime with margin.
-  #
-  # ACTUAL, measured end-to-end on job 48169 (4 epochs, completed): 4.92h per epoch, 19h37m total
-  # against the 20h walltime. Sustained rate was 1.13 it/s (events/s) for training and 3.4 it/s for
-  # validation, i.e. ~20% slower than the 1.42 ev/s the sizing above assumed. All four epochs took
-  # 4h52-4h55, so there is no warmup transient to average away - use 4.92h/epoch for future sizing.
-  # Note the progress-bar step counter covers TRAINING events only (20000/epoch); validation events
-  # are not in it, so do not size from 21000 steps/epoch. The margin here was 23 minutes; anything
-  # above 4 epochs at num_train=20000 needs a longer --time, not just a bigger max_epochs.
-  #
-  # The schedule MUST fit the walltime. OneCycleLR is sized from total steps, so a run that gets
-  # killed early never reaches its decay phase and its final checkpoint is taken at a high learning
-  # rate — that is exactly how the hit-filter run was wasted (8 epochs configured, 12h walltime).
-  # If you change num_train or the walltime, resize this too.
   max_epochs: 4
-  # Gradient accumulation: run 4 events one at a time, sum their gradients, then take ONE optimiser
-  # step. This gives the statistical benefit of batch 4 at the memory cost of batch 1, which matters
-  # because Lion uses only the SIGN of the gradient — with a single event per step that sign is noisy
-  # and the model wanders (this is why 1e-4 thrashed and 1.5e-4 diverged at batch 1). Real batching
-  # is not available here: batch 10 still OOMs on an 80GB A100 (see batch_size above).
-  # Trade-off: it also divides the number of optimiser steps by 4 (84k forward passes -> 21k steps),
-  # so the learning rate is raised to compensate — see lrs_config below. 4 rather than 10 keeps
-  # enough optimiser steps to make real progress within the walltime.
+  # Sum gradients over 4 events, then take one optimiser step: the statistical benefit of batch 4
+  # at the memory cost of batch 1 (batch 4 OOMs an 80GB A100 at ~22k hits/event). Lion uses only
+  # the SIGN of the gradient, which is too noisy at batch 1. Divides optimiser steps by 4, which is
+  # why lrs_config.max below is raised to match - the two settings are only valid together.
   accumulate_grad_batches: 4
   accelerator: gpu
   devices: 1
@@ -134,44 +58,22 @@ trainer:
   default_root_dir: logs
   gradient_clip_val: 0.1
   enable_progress_bar: true
-  # Validate once per epoch on the disjoint 500-event val window. The val set is now large enough
-  # that running it more often would add meaningful overhead to the long run.
-  # Validate twice per epoch. At 3000 events/epoch, validating once per epoch produced only ~3
-  # points in the first 2 hours - far too sparse to judge a run early (and easy to mistake for
-  # "validation is not being logged"). Halving num_val to 250 and doubling the frequency gives 4x
-  # the monitoring resolution for the same ~2.6h of total validation time across the run.
-  # 0.25 = four validations per epoch. At num_train 20000 this is every 5000 events; with 0.5 the
-  # first validation did not arrive until ~1.5h into a run (and a 2h LR test got only ONE point,
-  # which nearly wasted the test). Four per epoch over 13 epochs gives 52 points, first at ~45min,
-  # for ~1.9h of validation across a ~39h run.
   val_check_interval: 0.25
 
-  # Comet online logging. The API key is read from the COMET_API_KEY environment variable so the
-  # secret never lives in this (git-tracked) file — `export COMET_API_KEY=...` before submitting
-  # (the sbatch script forwards it into the container). To go back to local-only CSV logging with
-  # no account, swap class_path to hepattn.utils.loggers.MyCSVLogger and drop init_args.
   logger:
     class_path: hepattn.utils.loggers.MyCometLogger
     init_args:
-      workspace: finnbarwilson              # your Comet username / namespace
-      project: colliderml-calo-clustering   # groups these runs; Comet auto-creates it
+      workspace: finnbarwilson
+      project: colliderml-calo-clustering
       online: true
 
   callbacks:
-    # - class_path: hepattn.callbacks.Compile
     - class_path: hepattn.callbacks.InferenceTimer
     - class_path: hepattn.callbacks.SaveConfig
     - class_path: hepattn.callbacks.Checkpoint
       init_args:
         monitor: val/loss
-        # The callback hardcodes save_top_k=-1 (keeps EVERY checkpoint) and defaults log_model=true
-        # (uploads each one to Comet, ~2GB in the diverged run). We can't override save_top_k, but we
-        # can stop the Comet uploads and save less often (every 2 epochs) to keep the disk footprint
-        # small on the near-full shared filesystem.
         log_model: false
-        # Every epoch, not every 2. With only 4 epochs this gives 4 recovery points instead of
-        # 2, which matters because this node has a GPU that kills jobs mid-run. Checkpoints are
-        # ~120 MB at dim 256, so 4 of them is negligible even on the near-full filesystem.
         every_n_epochs: 1
     - class_path: hepattn.callbacks.PredictionWriter
       init_args:
@@ -189,20 +91,10 @@ trainer:
 model:
   optimizer: lion
 
-  # 1e-4, raised from 5e-5, and only valid TOGETHER WITH accumulate_grad_batches: 4 above.
-  #
-  # Two reasons it has to go up. (1) Accumulation divides the number of optimiser steps by 4, and
-  # Lion's update is sign-based — every parameter moves by almost exactly +/-lr per step — so at an
-  # unchanged lr the model would simply travel a quarter as far over the run. (2) Averaging 4 events
-  # before taking the sign makes the gradient direction far less noisy, which is what makes a larger
-  # step safe. sqrt-scaling 5e-5 by sqrt(4) gives 1e-4.
-  #
-  # 1e-4 is deliberately the value that thrashed at batch 1 (train loss flat ~23, val p0.5 eff
-  # 0.010 -> 0.001, num_calohit_per_flow oscillating 167-2240 against a true 16.5). If it now trains
-  # smoothly, that directly confirms the noisy-sign explanation. If it thrashes again, the
-  # explanation is wrong — drop back to 5e-5 rather than tuning around it.
   lrs_config:
     initial: 1e-5
+    # 1e-4, sqrt(4)-scaled from 5e-5 to compensate for accumulate_grad_batches: 4 above. Only valid
+    # together with it - 1e-4 thrashed and 1.5e-4 diverged at batch 1.
     max: 1e-4
     end: 1e-6
     pct_start: 0.01
@@ -214,23 +106,10 @@ model:
   model:
     class_path: hepattn.models.MaskFormer
     init_args:
-      # 256. dim 384 was tried and REVERTED — it does not pay for itself on unfiltered data.
-      #
-      # The earlier capacity sweep that favoured 384 was run on TRUTH-FILTERED data (63% of hits
-      # removed), where it clearly won at equal steps. Repeated on the real, unfiltered input
-      # (runs bd7d05f1 = 256, e4c43c8d = 384) it does not: at equal steps the threshold-free
-      # metrics are mixed-to-worse — mask dice 3.67 vs 3.52, train loss 4.46 vs 4.44, incidence KL
-      # 0.221 vs 0.254 — while throughput drops from 1.42 to 1.03 events/s, i.e. 27% fewer steps
-      # per hour. Mixed evidence plus a real throughput cost means no.
-      # Reading: capacity is not the binding constraint while 63% of the input is unowned hits.
-      # Revisit 384 only if effective filtering ever lands.
-      #
-      # NOTE: configs/overlay_*.yaml hardcode this value (YAML anchors do not cross files).
-      # Change it here and you must change it there too.
+      # configs/overlay_*.yaml hardcode this value - YAML anchors do not cross files.
       dim: &dim 256
-      # phi, not eta. The encoder sorts constituents by this field before windowed attention, so it
-      # decides which hits end up in each other's window. trackML and CLD both sort in phi; we were
-      # sorting in eta, which was simply wrong for this detector geometry.
+      # The encoder sorts constituents by this before windowed attention, so it decides which hits
+      # share a window.
       input_sort_field: phi
 
       input_nets:
@@ -241,11 +120,9 @@ model:
               init_args:
                 input_name: calohit
                 input_dtype: float32
-                # log_energy, not total_energy: InputNet applies NO normalisation, it just
-                # concatenates these raw fields into the Dense. Raw total_energy has mean ~0.0035 /
-                # std ~0.005, i.e. ~1000x smaller than the O(1) coordinates, so the single most
-                # important feature for calo clustering was numerically drowned out. log_energy
-                # (mean ~-6.1, std ~0.8) is on the same scale as the coordinates.
+                # log_energy, not total_energy: InputNet applies no normalisation, and raw
+                # total_energy is ~1000x smaller than the O(1) coordinates, so the single most
+                # important feature for calo clustering was numerically drowned out.
                 fields:
                   - x
                   - y
@@ -261,14 +138,9 @@ model:
                     hidden_layers: [128]
                     output_size: *dim
                     activation: SwiGLU
-                # FourierPositionEncoder, not PositionEncoder. PositionEncoder's defaults
-                # (alpha=1000) produce frequencies from ~10 up to ~1000, which alias at the scale
-                # that actually matters here: a shower spans ~0.007 in eta, so its hits were being
-                # given decorrelated encodings. Measured cosine similarity between hits of the same
-                # true particle (minus the random-pair baseline): PositionEncoder +0.31 vs
-                # FourierPositionEncoder +0.72, i.e. 2.3x more locality signal - and locality is the
-                # primary cue for grouping shower hits. Coordinates are O(1) (mm->m scaled), which
-                # is the range FourierPositionEncoder's default scale=1 is designed for.
+                # FourierPositionEncoder, not PositionEncoder: the latter's default frequencies
+                # alias at the scale that matters here (a shower spans ~0.007 in eta), giving hits
+                # of the same particle decorrelated encodings. Measured 2.3x more locality signal.
                 posenc:
                   class_path: hepattn.models.posenc.FourierPositionEncoder
                   init_args:
@@ -282,18 +154,9 @@ model:
       encoder:
         class_path: hepattn.models.Encoder
         init_args:
-          # 4 encoder / 4 decoder layers, per supervisor guidance for these studies. (Briefly ran 6
-          # while chasing the GLOW paper's spec; that framing turned out not to apply — GLOW does
-          # PFlow from tracks + topoclusters, not raw-hit clustering.)
           num_layers: 4
           dim: *dim
-          # flash-varlen, not flash: plain flash does not support kv masking, which batch_size > 1
-          # requires (events have different hit counts, so batches are padded). flash-varlen also
-          # unpads internally via cu_seqlens, so the padding costs no attention compute. It supports
-          # sliding-window attention just like flash.
           attn_type: flash-varlen
-          # 1024, matching CLD. Combined with the phi sorting above, this is the windowing setup
-          # used by the trackML and CLD configs.
           window_size: 1024
           window_wrap: true
           hybrid_norm: true
@@ -303,8 +166,6 @@ model:
 
       decoder:
         num_decoder_layers: 4
-        # Must equal data.event_max_num_particles (MaskFormer matches num_queries predictions to
-        # that many padded target slots). num_queries caps how many clusters the model can output.
         num_queries: *num_objects
         mask_attention: true
         use_query_masks: false
@@ -341,18 +202,9 @@ model:
                 mask_queries: false
                 has_intermediate_loss: true
                 has_first_layer_loss: false
-                # 0.2, measured. A true particle only counts as reconstructed if the query matched
-                # to it is ALSO accepted here, so this gate can throw away efficiency the masks had
-                # already earned — and by default it is an argmax, i.e. a fixed 0.5.
-                # Swept post-hoc on the epoch-27 checkpoint (scripts/sweep_pred_threshold.py,
-                # 50 events), holding the mask threshold at its 0.5 default:
-                #     obj 0.5 -> eff 0.299, pur 0.311   (the default)
-                #     obj 0.3 -> eff 0.361, pur 0.304
-                #     obj 0.2 -> eff 0.374, pur 0.300   <- +25% relative efficiency, purity flat
-                #     obj 0.1 -> eff 0.380, pur 0.293
-                # The masks alone were already worth 0.383, so this recovers almost all of what the
-                # default gate was discarding. Affects prediction and metrics only — not the loss,
-                # not the matching — so it costs nothing at training time.
+                # A true particle only counts as reconstructed if its matched query is also accepted
+                # here, and the default is an argmax at 0.5. Swept post-hoc: 0.2 gave +25% relative
+                # efficiency at flat purity. Affects prediction and metrics only, not the loss.
                 eval_threshold: 0.2
 
             - class_path: hepattn.models.task.ObjectHitMaskTask
@@ -371,12 +223,10 @@ model:
                 null_weight: 1.0
                 dim: *dim
 
-            # The incidence matrix. Previously missing here.
-            # Predicts, I_ia = E_ia/E_i, the fraction of each calo hit's energy belonging to each particle
-            # (softmax over particles, so each hit's fractions sum to 1). This is energy-conserving
-            # by construction and, unlike the binary mask above, can represent a cell shared between
-            # several particles: 12.6% of our hits, which the mask target cannot express at all.
-            # Target is built in data.py as `particle_incidence`. Ported from experiments/clic.
+            # Third head, not in the tracking configs. Predicts I_ia = E_ia/E_i, the fraction of
+            # each cell's energy belonging to each particle (softmax over particles). Energy
+            # conserving by construction, and unlike the binary mask above it can represent a cell
+            # shared between several particles - 12.6% of our hits. Ported from experiments/clic.
             - class_path: hepattn.models.task.IncidenceRegressionTask
               init_args:
                 name: incidence
@@ -384,20 +234,13 @@ model:
                 input_object: query
                 output_object: flow
                 target_object: particle
-                # Weight 100, not clic's 1.0. kl_div is mean-reduced over the whole
-                # [particles x hits] matrix, and ours is ~50x sparser than clic's (~500 particles x
-                # ~16 hits nonzero within 1000 x ~22000, versus 150 x ~5 within 150 x ~300). At
-                # weight 1.0 the measured loss was ~0.011 against a total of ~28, i.e. no practical
-                # influence on training. 100 brings it to ~1.1, comparable to a single mask term
-                # without dominating. Tune this if incidence and mask objectives start fighting.
+                # 100, not clic's 1.0: kl_div is mean-reduced over the whole [particles x hits]
+                # matrix and ours is ~50x sparser, so at 1.0 it contributed ~0.011 against a total
+                # of ~28, i.e. nothing.
                 losses:
                   kl_div: 100.0
-                # Incidence supervises the loss but is deliberately not used as a matching cost.
-                # kl_div_cost builds a [queries x particles x hits] tensor to score every possible
-                # pairing: at CLIC's scale (150 x 150 x ~300 nodes) that is trivial, but here it is
-                # 1000 x 1000 x ~22000 = 86 GB and OOMs instantly. Matching is already driven by
-                # mask_dice/mask_focal/object_bce, which score the same particle-hit association, so
-                # dropping incidence from the cost costs us little and keeps the loss signal intact.
+                # Supervises the loss but is deliberately not a matching cost: kl_div_cost builds a
+                # [queries x particles x hits] tensor, which is 86 GB here and OOMs instantly.
                 costs: {}
                 net:
                   class_path: hepattn.models.Dense
