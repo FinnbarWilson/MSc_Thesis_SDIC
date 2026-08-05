@@ -129,6 +129,11 @@ ce_ai_1/                     Launchers for ce-ai-1, the machine the pu200 work r
                              record of what pileup-200 forced to change. NOT part of the mirror --
                              these are mine, so keeping them out of hepattn_colliderml/ is what
                              lets verify_sync.sh still pass. Start at ce_ai_1/README.md.
+dias/                        Slurm launchers for DIAS, for the config as this repository now has
+                             it: they pass it by absolute path so a stale checkout cannot change
+                             what is trained, ask for a walltime the schedule fits, and fix the
+                             ECC preflight's device numbering. Mine, so likewise outside the
+                             mirror. Start at dias/README.md.
 checkpoint/                  The trained weights the reported results come from, plus provenance.
 hepattn-changes.patch        My modifications to the upstream library.
 verify_sync.sh               Checks hepattn_colliderml/ against a hepattn checkout.
@@ -190,11 +195,18 @@ everything runs inside an Ubuntu 22.04 container:
 apptainer build ~/ubuntu22.sif docker://ubuntu:22.04
 ```
 
-**Train.** ~4.9 h per epoch at 20000 events on one A100, measured end to end:
+**Train.** ~2.9 h per epoch at 20000 events on one A100 with 32 CPUs, measured end to end:
 
 ```bash
-sbatch src/maskformer/hepattn_colliderml/slurm/calo_clustering.sh
+sbatch src/maskformer/dias/train_calo_clustering.sh
 ```
+
+`dias/train_calo_clustering.sh`, not the mirrored `hepattn_colliderml/slurm/calo_clustering.sh`.
+The latter is the provenance of the checkpoint below and stays byte-identical to upstream; the
+former runs the config as *this repository* now has it, on a walltime and an allocation that
+configuration fits. The epoch time above is not a property of the model: the run is **input-bound**,
+and the same work took 5.2 h/epoch under the mirrored script's 12 CPUs. [`dias/README.md`](dias/README.md)
+has the measurements. Run `dias/smoke_calo_clustering.sh` first.
 
 Add the overlays to change the objective or the schedule:
 
