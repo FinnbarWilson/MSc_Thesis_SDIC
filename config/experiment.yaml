@@ -45,12 +45,26 @@ dataset:
   active: pu0            # pu0 | pu200
 
   pu0:
-    # Format 2, which carries the incidence head as well as the masks. The v1 store beside it
-    # is the same checkpoint and the same events and still scores identically for `maskformer`,
-    # but `maskformer_incidence` cannot be derived from it -- the head was computed on every
-    # forward pass and thrown away.
-    store: /home/xucapfwi/eventstore_ep003_v2/ttbar_pu0_20250_20750_v2
-    tune_store: /home/xucapfwi/eventstore/ttbar_pu0_20000_20050_v1
+    # Dumped from the SIMPLIFIED-BASELINE checkpoint: run 48247, 7 epochs, AdamW,
+    # accumulate_grad_batches 1, no incidence head, mask_dice = mask_bce = 1.0.
+    #   epoch=006-val_loss=4.92620.ckpt
+    #
+    # THE 4.93 IS NOT COMPARABLE TO THE PREVIOUS CHECKPOINT'S 18.06. That run's objective was
+    # dice 5 + focal 20 plus an incidence head at kl_div weight 100; this one is dice 1 + bce 1
+    # with no incidence term at all. Different sum, different scale. Compare the two by the
+    # metrics in results/, never by their losses.
+    #
+    # Format 2, but `has_incidence: false` -- the store's own metadata says so. The head is gone
+    # from the config, so eval/dump.py writes width-0 mf_incidence arrays and
+    # `maskformer_incidence` CANNOT BE SCORED from this store. That is the documented cost of
+    # the ablation, not a dump that went wrong. The old store is kept beside it for that
+    # comparison:  /home/xucapfwi/eventstore_ep003_v2/ttbar_pu0_20250_20750_v2
+    store: /home/xucapfwi/MSc_Thesis_SDIC/external/eventstore_ep006/ttbar_pu0_20250_20750_v2
+    # [20000, 20050) -- disjoint from the eval window, and where the MaskFormer working point
+    # below is chosen, so that threshold is not selected on the events it is scored over. Note
+    # these 50 events WERE the training run's validation split, so they are unseen by the
+    # optimiser but not by model selection. Same status as CLUE's tuning window.
+    tune_store: /home/xucapfwi/MSc_Thesis_SDIC/external/eventstore_ep006/ttbar_pu0_20000_20050_v2
     windows:
       eval_start: 20250
       eval_events: 500
@@ -356,7 +370,7 @@ clue:
 # `dataset.pu200.overrides.maskformer` -- because a pu0-trained model evaluated on pu200
 # measures domain shift rather than the architecture.
 maskformer:
-  checkpoint: /home/xucapfwi/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260802-T234016/ckpts/epoch=003-val_loss=18.06191.ckpt
+  checkpoint: /home/xucapfwi/MSc_Thesis_SDIC/external/logs/ColliderML_Calo_Clustering_20260805-T172452/ckpts/epoch=006-val_loss=4.92620.ckpt
   mask_threshold: 0.5
   object_threshold: 0.2
   mask_scan: [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]

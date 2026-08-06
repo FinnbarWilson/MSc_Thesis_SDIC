@@ -5,12 +5,12 @@ dataset pu0   ->  results/pu0/  figures/pu0/
   checkpoint  epoch=006-val_loss=4.92620.ckpt
   cuts        {'calohit_min_energy': 0.0002}  {'event_max_num_particles': 1000, 'particle_max_abs_eta': 4.0, 'particle_min_num_calohits': 3, 'particle_min_pt': 0.5}
   clue params  tuned, from /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/clue_parameters.json
-  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/particles_maskformer.parquet  (269059 rows, 30.5 MB)
-  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/clusters_maskformer.parquet  (376452 rows, 14.4 MB)
-  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/events_maskformer.parquet  (500 rows, 0.0 MB)
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/particles_oracle_geometric.parquet  (269059 rows, 29.5 MB)
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/clusters_oracle_geometric.parquet  (269059 rows, 13.0 MB)
+  wrote /home/xucapfwi/MSc_Thesis_SDIC/results/pu0/events_oracle_geometric.parquet  (500 rows, 0.0 MB)
 
-  eff@0.5 (energy) 0.371   pur@0.5 (energy) 0.274
-  eff mean 0.394   median 0.361   |   pur mean 0.291   median 0.132
-  split  hits 0.419  energy 0.473
-  merge  hits 0.234  energy 0.248
-  frag 0.526   fake 0.449   (match floor 0.05 of the smaller total)
+  eff@0.5 (energy) 0.608   pur@0.5 (energy) 0.194
+  eff mean 0.590   median 0.638   |   pur mean 0.297   median 0.240
+  split  hits 0.711  energy 0.659
+  merge  hits 0.648  energy 0.602
+  frag 0.308   fake 0.104   (match floor 0.05 of the smaller total)
