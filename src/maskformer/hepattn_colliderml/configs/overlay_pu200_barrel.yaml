@@ -35,7 +35,27 @@ data:
   # Must equal num_queries below. Measured 1,342 targets/event mean, 1,750 max.
   event_max_num_particles: 2100
 
-  num_workers: 8
+  # 24, was 8. pu200 is CPU-bound, not GPU-bound: measured on the 8-worker run, the card drew 76 W
+  # of a 300 W TDP while the process tree used ~1250% CPU, and the box has 104 cores at a load
+  # average of ~15. This is the same diagnosis and the same fix as the pu0 run on DIAS.
+  #
+  # ONLY SAFE BECAUSE row_group_cache_size DROPS TO 3 just below; at data.py's default of 8 this
+  # would have put host RSS near 690 GB. The two numbers must move together.
+  #
+  # It does NOT fix all of the CPU cost. The Hungarian matcher is ~300 ms per solve at 2100 queries
+  # and runs once per decoder layer, so ~1.2 s of every step is single-threaded work in the main
+  # process that no number of workers touches. LAP is O(n^3), so that cost is ~9x the pu0 figure.
+  num_workers: 24
+
+  # 3, against data.py's default of 8, and PU200-ONLY on purpose: it is set here rather than in
+  # data.py so that changing it cannot alter pu0, which shares that file. A decoded pu200 shard is
+  # 4.0 GB, so the 24 workers above would need ~690 GB at 8 slots; at 3 they measured 518 GB
+  # resident, against 847 GB free on this box.
+  #
+  # NOTE the 518 GB is higher than the ~260 GB first estimated, because the run spawns ~49 worker
+  # processes (train plus validation and prefetch), not the 24 requested. Budget from the process
+  # count, not the num_workers value.
+  row_group_cache_size: 3
 
   num_train: 6000
   num_val: 250
@@ -90,6 +110,81 @@ trainer:
 model:
   model:
     init_args:
+      # THE MASK OBJECTIVE IS SET HERE, NOT IN calo_clustering.yaml, AND ON PURPOSE. pu0 runs
+      # dice 1 + bce 1 and is a different regime -- its target is ~2.3x denser (positive rate
+      # ~4.1e-04 against 1.81e-04 here) -- so the two pileup conditions do not have to share an
+      # objective and this one is chosen for pu200 alone.
+      #
+      # CHOSEN FROM A MEASURED SWEEP, not from the pu0 weights. Three arms, 1500 steps each on this
+      # exact config, scored by eff/purity on 10 test events with best-overlap matching
+      # (external/sweep_mask_loss_results.txt, and configs/overlay_sweep_short.yaml for the setup):
+      #
+      #   arm                   max prob   eff@0.5   eff@0.75   pur@0.5   cells/flow (truth 15)
+      #   dice 20 + focal 1      1.0000     0.6641    0.4192     0.1175        31.7   <- this
+      #   dice  5 + focal 20     1.0000     0.6645    0.4109     0.1179        32.8
+      #   dice only              0.0000     collapsed -- no cell anywhere above 0.5
+      #   dice 1 + bce 1         0.0995     collapsed -- mean output == the target prior
+      #
+      # WHAT THE SWEEP ACTUALLY ESTABLISHED. Focal's PRESENCE is what matters, not its weight: both
+      # arms that had it work and are statistically indistinguishable, and both arms without it
+      # collapse. The two collapses have different mechanisms and both are dead ends -- BCE
+      # converges to predicting the target prior everywhere, while dice alone saturates the sigmoid
+      # at zero and sits on a flat region where the gradient vanishes. Focal is the per-cell term
+      # that keeps the sigmoid off the floor; dice is the set-overlap term that is immune to the
+      # 5,400:1 class imbalance. Neither does the other's job.
+      #
+      # WHY THE DICE-DOMINANT ARM WON A TIE. The remaining failure is over-prediction (masks 2.1x
+      # truth, purity 0.12), dice is the term that governs predicted SET SIZE, and this arm is
+      # marginally tighter and marginally better at the stricter working point. The margin is
+      # within noise on 10 events; the mechanism is the actual reason.
+      #
+      # AN EARLIER COLLAPSE HAD A DIFFERENT CAUSE ENTIRELY. The 7-epoch run of 20260804-T133952
+      # collapsed with dice 5 + focal 20, which the arms above show trains fine here -- that one was
+      # the non-barrel config, whose 1e-3 energy cut left a positive rate of 4.67e-05. Do not read
+      # it as evidence about loss weights.
+      tasks:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.task.ObjectClassificationTask
+              init_args:
+                name: flow_valid
+                input_object: query
+                output_object: flow
+                target_object: particle
+                losses:
+                  object_bce: 1.0
+                costs:
+                  object_bce: 0
+                dim: 256
+                null_weight: 1.0
+                mask_queries: false
+                has_intermediate_loss: true
+                has_first_layer_loss: false
+                # STALE, and it is the first thing to re-sweep once this run finishes. 0.2 came from
+                # a sweep against a different objective; here it accepts 1,749 of 2,100 queries
+                # against 1,498 true particles, which is most of why purity is 0.12. It affects
+                # prediction and metrics only, never the loss, so it is safe to leave and fix after
+                # the fact: scripts/sweep_pred_threshold.py.
+                eval_threshold: 0.2
+
+            - class_path: hepattn.models.task.ObjectHitMaskTask
+              init_args:
+                name: flow_calohit_assignment
+                input_constituent: calohit
+                input_object: query
+                output_object: flow
+                target_object: particle
+                losses:
+                  mask_dice: 20.0
+                  mask_focal: 1.0
+                # Dice-only, unchanged from calo_clustering.yaml. Note loss.py has no `mask_bce`
+                # entry in cost_fns at all, so BCE could not be a cost here even if wanted.
+                costs:
+                  mask_dice: 1.0
+                null_weight: 1.0
+                dim: 256
+
       decoder:
         num_decoder_layers: 4
         num_queries: 2100

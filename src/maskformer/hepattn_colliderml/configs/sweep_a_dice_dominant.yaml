@@ -1,0 +1,50 @@
+# Sweep arm A: dice-dominant (dice 20 + focal 1)
+#
+# One of three arms; the shared rationale, sizing and success criterion are in
+# overlay_sweep_short.yaml. `tasks` is a LIST, so jsonargparse replaces it wholesale rather than
+# merging -- the whole list is restated here and the ONLY difference between arms is the mask
+# head's `losses` block. Costs are dice-only in every arm, unchanged from calo_clustering.yaml.
+#
+# THE HYPOTHESIS UNDER TEST. Dice is the only imbalance-immune term available, so making it
+# dominant should remove the prior-predicting optimum entirely while focal at 1.0 still supplies
+# some per-cell gradient to sharpen boundaries. If collapse is really an imbalance problem, this
+# is the arm that escapes it. Note the ratio is INVERTED from the historical dice 5 / focal 20.
+
+model:
+  model:
+    init_args:
+      tasks:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.task.ObjectClassificationTask
+              init_args:
+                name: flow_valid
+                input_object: query
+                output_object: flow
+                target_object: particle
+                losses:
+                  object_bce: 1.0
+                costs:
+                  object_bce: 0
+                dim: 256
+                null_weight: 1.0
+                mask_queries: false
+                has_intermediate_loss: true
+                has_first_layer_loss: false
+                eval_threshold: 0.2
+
+            - class_path: hepattn.models.task.ObjectHitMaskTask
+              init_args:
+                name: flow_calohit_assignment
+                input_constituent: calohit
+                input_object: query
+                output_object: flow
+                target_object: particle
+                losses:
+                  mask_dice: 20.0
+                  mask_focal: 1.0
+                costs:
+                  mask_dice: 1.0
+                null_weight: 1.0
+                dim: 256

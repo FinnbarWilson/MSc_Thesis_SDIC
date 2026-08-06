@@ -1,0 +1,56 @@
+# Short-run overlay for the mask-objective sweep. Applied on top of the barrel config:
+#
+#   main.py fit --config configs/calo_clustering.yaml \
+#               --config configs/overlay_pu200_barrel.yaml \
+#               --config configs/overlay_sweep_short.yaml \
+#               --config configs/sweep_<arm>.yaml
+#
+# WHY A SWEEP AT ALL
+#
+# Two mask objectives have now been trained to convergence at pu200 and BOTH collapsed to
+# predicting the target prior everywhere, measured directly off their checkpoints:
+#
+#   run                          objective            max mask prob   flow_valid      positive rate
+#   20260804-T133952 (7 epochs)  dice 5 + focal 20       0.0000       0.483 flat        4.67e-05
+#   20260805-T142729 (1500 st)   dice 1 + bce 1          0.0995       0.763, max .957   1.81e-04
+#   pu0 (trains)                 dice 5 + focal 20         --            --             ~4.1e-04
+#
+# Collapse severity tracks the POSITIVE RATE, not the choice of focal vs BCE. pu200 is 2-9x
+# sparser than the pu0 configuration these weights were tuned on, and both focal and BCE are
+# losses whose gradient is dominated by the negative class, so both find the same degenerate
+# optimum: emit the base rate and stop. Each of those findings cost ~20 h of A100.
+#
+# So the arms are chosen around the one term that CANNOT collapse that way. DICE is set overlap
+# and is insensitive to the count of true negatives -- predicting all-zeros scores dice = 1, the
+# worst possible value, so a dice-dominated objective has no prior-predicting escape. Every pu200
+# attempt so far has been focal- or BCE-dominated. See the individual sweep_*.yaml files.
+#
+# WHAT COUNTS AS A RESULT. Not val/loss, which is not comparable across arms with different loss
+# weights. The diagnostic is the one run on the checkpoints above: max mask probability and the
+# number of cells above 0.5. An arm that puts ANY cells above 0.5 has escaped the collapse; an arm
+# whose mean probability equals the target positive rate has not. Collapse was visible at 1500
+# steps in the run above, which is what sizes this file.
+
+data:
+  # 1500 events, one pass = 1500 optimiser steps at accumulate_grad_batches 1. Sized to match the
+  # point at which the BCE arm's collapse was already unambiguous, not to train a usable model.
+  num_train: 1500
+  num_val: 50
+  num_test: 50
+
+  # 16, not the 24 used for pu0 on DIAS. data.py hardcodes `_row_group_cache_size = 8` PER WORKER
+  # and a decoded pu200 shard is 4.0 GB, so host RSS scales as workers x 8 x 4 GB: the 8-worker run
+  # measured 229 GB and 24 would head toward ~690 GB on a machine shared with other users. 16 is
+  # the compromise. THE REAL FIX is to lower that cache size so worker count and RSS stop being
+  # locked together -- see the note in ../../ce_ai_1/sweep_mask_loss.sh.
+  num_workers: 16
+
+trainer:
+  max_epochs: 1
+  # Two validations, so there is a mid-run point as well as an end point to compare.
+  val_check_interval: 0.5
+  # A guard, not a plan: ~2.1 h expected per arm at the ~0.2 events/s 16 workers should give.
+  max_time: "00:03:30:00"
+  logger:
+    init_args:
+      project: colliderml-calo-clustering-pu200-sweep
