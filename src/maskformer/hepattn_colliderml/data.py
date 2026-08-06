@@ -92,6 +92,18 @@ class ColliderMLDataset(Dataset):
         build_calohit_associations: bool = True,
         dataset_prefix: str | None = None,
         calo_only: bool = False,
+        # Decoded parquet row groups held PER DATALOADER WORKER. Host RSS scales as
+        # num_workers x this x decoded shard size, which is what ties worker count to memory.
+        #
+        # DEFAULT 8 IS THE HISTORICAL VALUE AND IS DELIBERATELY UNCHANGED, so pu0 and every existing
+        # config behave exactly as before. pu200 lowers it in configs/overlay_pu200_barrel.yaml,
+        # where a decoded shard is 4.0 GB against pu0's ~1.5 GB and 24 workers at 8 slots would
+        # need ~690 GB. Measured there: 24 workers x 3 slots = 518 GB resident.
+        #
+        # Lowering it trades per-worker cache hit rate for the ability to run more workers. That is
+        # the right trade only when the job is dataloader-bound AND shards are large; do not lower
+        # it for pu0, where the same 8 slots cost far less and the run is not memory-constrained.
+        row_group_cache_size: int = 8,
         debug: bool = False,
     ):
         super().__init__()
@@ -135,7 +147,9 @@ class ColliderMLDataset(Dataset):
         # Must be initialised before counting events in shards.
         self._row_group_starts: dict[str, np.ndarray] = {}
         self._row_group_cache: OrderedDict[tuple[str, int], ak.Array] = OrderedDict()
-        self._row_group_cache_size = 8
+        # Set from the constructor rather than hardcoded, so pu0 and pu200 can differ without one
+        # editing a file the other reads. See the argument's own comment for the sizing.
+        self._row_group_cache_size = row_group_cache_size
 
         # Build a dense sample index: each sample_id maps to (shard index, row/event index in shard).
         self.sample_index = []
