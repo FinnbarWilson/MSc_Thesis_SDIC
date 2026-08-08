@@ -37,6 +37,7 @@ from src.config import describe, results_dir, settings, store_expectations, stor
 from src.evaluation.metrics import pool, score_event
 from src.evaluation.oracle import geometric_labels, resolution_labels
 from src.io.event_store import EventStore
+from src.postproc import chain_labels
 
 # Untuned starting point, chosen against the measured cell energy scale rather than guessed;
 # see the commentary on `clue.search` in config/experiment.yaml. Replaced by the Optuna
@@ -56,6 +57,22 @@ def maskformer_labels(record, cfg):
     return record.maskformer_labels(
         mask_threshold=cfg["maskformer"]["mask_threshold"],
         object_threshold=cfg["maskformer"]["object_threshold"],
+        min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
+    )
+
+
+def maskformer_chained_labels(record, cfg):
+    """MaskFormer's clusters, then grown outwards by chaining. See src/postproc/chain.py.
+
+    Scored as a separate algorithm rather than replacing `maskformer`, for the same reason
+    `maskformer_incidence` is: both come through this scorer unchanged, so the difference between
+    the two rows isolates the post-processing from everything else about the model.
+    """
+    mf = cfg["maskformer"]
+    label, n = maskformer_labels(record, cfg)
+    return chain_labels(
+        record, label, n,
+        link_distance=mf["chain_link_distance"],
         min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
     )
 
@@ -92,7 +109,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--algo",
-        choices=["maskformer", "maskformer_incidence", "clue", "oracle_geometric", "oracle_resolution"],
+        choices=["maskformer", "maskformer_chained", "maskformer_incidence", "clue",
+                 "oracle_geometric", "oracle_resolution"],
         required=True,
     )
     parser.add_argument("--store", type=Path, default=None, help="defaults to dataset.<active>.store")
@@ -140,6 +158,8 @@ def main() -> None:
             break
         if args.algo == "maskformer":
             label, n = maskformer_labels(record, cfg)
+        elif args.algo == "maskformer_chained":
+            label, n = maskformer_chained_labels(record, cfg)
         elif args.algo == "maskformer_incidence":
             label, n = maskformer_incidence_labels(record, cfg)
         elif args.algo == "clue":

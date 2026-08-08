@@ -15,8 +15,14 @@ The quantity that actually distinguishes the hypotheses is the SHAPE of
 
 which on the unmodified config is flat-to-declining -- 6.4 cells for a 13-cell particle and 5.5 for
 a 38-cell one. A fix should make it RISE. `slope` below is the ratio of cells recovered for
-> 20 GeV particles to cells recovered for < 2 GeV ones: about 0.86 on the baseline, and > 1 for a
-model whose clusters grow with the shower.
+> 20 GeV particles to cells recovered for < 2 GeV ones, and > 1 means clusters grow with the shower.
+
+READ THE BASELINE ROW, NOT A REMEMBERED NUMBER. This ratio is 0.86 on the FULLY TRAINED model
+(seven epochs, 500 events) but 0.69 on the ONE-EPOCH baseline these arms are compared against, and
+an earlier version of this docstring quoted the 0.86 as if it applied here. They are different
+models measured over different windows. The comparison that means anything is arm-vs-baseline
+within one run of this script, which is why the baseline is scored from its own store every time
+rather than carried as a constant.
 
 `merged` is the second number to read. It merges every fragment a particle dominates and asks how
 often that clears 0.5 -- an oracle, so a ceiling rather than a method, but it separates "the model
@@ -50,6 +56,9 @@ ARMS = {
     "1: mask_attention off": REPO / "external/probes/overlay_probe_maskattn/store",
     "2: incidence head": REPO / "external/probes/overlay_probe_incidence/store",
     "3: exclusive target": REPO / "external/probes/overlay_probe_exclusive/store",
+    "4a: posenc scale 0.5": REPO / "external/probes/overlay_probe_posenc05/store",
+    "4b: posenc scale 0.2": REPO / "external/probes/overlay_probe_posenc02/store",
+    "5: affinity head": REPO / "external/probes/overlay_probe_affinity/store",
 }
 
 
@@ -127,10 +136,19 @@ def analyse(store_path: Path, cfg: dict, n_events: int) -> tuple[pd.DataFrame, d
         })
     table = pd.DataFrame(rows).set_index("bin")
     lo, hi = table.loc["<2", "recovered"], table.loc[">20", "recovered"]
+    # THE COST COLUMNS MATTER AS MUCH AS THE GAIN, and the posenc arms are why they exist. Widening
+    # the encoder's correlation length binds distant cells of one shower, but it also makes two
+    # neighbours 0.1 apart look alike -- and 69% of target particles sit in jet cores (dr_min < 0.1)
+    # against 2.9% above 20 GeV. An arm that lifts `eff_hi` while dropping `eff_core` has moved the
+    # failure rather than fixed it, and reporting only the high-energy number would hide that.
     summary = {
         "slope": hi / lo if lo else np.nan,
         "eff_hi": table.loc[">20", "eff"],
         "merged_hi": table.loc[">20", "merged"],
+        "eff_lo": table.loc["<2", "eff"],
+        "eff_core": (particles.loc[particles.dr_min < 0.1, "eff_e"] >= 0.5).mean(),
+        "eff_iso": (particles.loc[particles.dr_min > 0.2, "eff_e"] >= 0.5).mean(),
+        "eff_all": (particles.eff_e >= 0.5).mean(),
         "n": len(particles),
     }
     return table, summary
@@ -173,17 +191,22 @@ def main() -> None:
     print("VERDICT   slope = cells recovered at >20 GeV / at <2 GeV   (baseline ~0.86)")
     print("          higher is better; > 1.0 means clusters finally grow with the shower")
     print("=" * 78)
-    print(f"\n{'arm':>26s} {'slope':>7s} {'eff>20':>8s} {'merged>20':>10s}")
+    print(f"\n{'arm':>26s} {'slope':>7s} {'eff>20':>8s} {'merged>20':>10s} | {'eff<2':>7s} {'jetcore':>8s} {'isolated':>9s} {'all':>7s}")
     base = next(iter(results.values()))[1]
     for name, (_t, s) in results.items():
         flag = ""
         if name.startswith("baseline"):
             flag = "  <- reference"
+        elif s["eff_hi"] > base["eff_hi"] * 1.10 and s["eff_core"] >= base["eff_core"] * 0.97:
+            flag = "  <- GAIN WITHOUT COST"
+        elif s["eff_hi"] > base["eff_hi"] * 1.10:
+            flag = "  <- high-E up, jet core DOWN: the trade is real"
         elif s["slope"] > base["slope"] * 1.15:
-            flag = "  <- MOVED THE SHAPE"
-        elif s["slope"] < base["slope"] * 0.9:
-            flag = "  <- worse"
-        print(f"{name:>26s} {s['slope']:7.2f} {s['eff_hi']:8.3f} {s['merged_hi']:10.3f}{flag}")
+            flag = "  <- shape moved"
+        elif s["eff_all"] < base["eff_all"] * 0.9:
+            flag = "  <- worse overall"
+        print(f"{name:>26s} {s['slope']:7.2f} {s['eff_hi']:8.3f} {s['merged_hi']:10.3f} | "
+              f"{s['eff_lo']:7.3f} {s['eff_core']:8.3f} {s['eff_iso']:9.3f} {s['eff_all']:7.3f}{flag}")
 
     print("\nCLUE, for reference, on the full 500-event window: eff@0.5 = 0.224 above 20 GeV.")
     print("An arm that raises `slope` is the mechanism confirmed and is worth a full 20 h run.")

@@ -74,9 +74,16 @@ run_in_container "$ENV_PYTHON" main.py fit \
 # the only place it is recorded when the logger is the Comet one.
 RUN_DIR="$(ls -dt "$OUT"/*/ 2>/dev/null | head -1)"
 [ -n "$RUN_DIR" ] || { echo "ABORT: no run directory under $OUT"; exit 1; }
-CKPT="$(ls "$RUN_DIR"ckpts/*.ckpt 2>/dev/null | sed 's/.*val_loss=//' | sort -n | head -1)"
+# Sort the checkpoints by the val_loss embedded in their names and take the lowest. `sort -t= -k3`
+# keys on the field after the second '=', which is the loss, so no substring surgery is needed.
+#
+# THE EARLIER VERSION OF THIS COST A NIGHT. It piped through `sed 's/.*val_loss=//'`, which leaves
+# "6.06496.ckpt" rather than "6.06496", and then rebuilt the path as "*val_loss=$CKPT.ckpt" --
+# giving "...val_loss=6.06496.ckpt.ckpt", which matches nothing. Under `set -e` that killed all
+# three arms AFTER they had each trained a full epoch. Never reconstruct a path from a fragment
+# when you can carry the whole one through.
+CKPT="$(ls "$RUN_DIR"ckpts/*.ckpt 2>/dev/null | sort -t= -k3 -n | head -1)"
 [ -n "$CKPT" ] || { echo "ABORT: no checkpoint under $RUN_DIR"; exit 1; }
-CKPT="$(ls "$RUN_DIR"ckpts/*val_loss=$CKPT.ckpt | head -1)"
 echo
 echo "best checkpoint: $CKPT"
 

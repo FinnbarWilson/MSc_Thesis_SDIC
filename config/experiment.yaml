@@ -378,3 +378,26 @@ maskformer:
   incidence_floor: 0.0
   incidence_restrict_to_mask: false
   incidence_floor_scan: [0.0, 0.1, 0.2, 0.3, 0.5]
+
+  # --- seeded chaining (algo `maskformer_chained`) ---------------------------
+  # Cell-to-cell linking distance in METRES for src/postproc/chain.py, which grows the predicted
+  # clusters outwards into unclaimed cells the way CLUE's nearest-denser-neighbour chaining does.
+  # It is a linking scale, not a cluster radius: chaining reaches far by taking many small steps.
+  #
+  # 0.05 is chosen on the TUNE window [20000, 20050), disjoint from the 500 events scored, the same
+  # discipline CLUE's own parameters get. Measured there:
+  #
+  #   link d      eff     pur   eff>20
+  #   (none)    0.377   0.278    0.159
+  #   0.01      0.419   0.250    0.179
+  #   0.05      0.455   0.219    0.205
+  #   0.08      0.470   0.212    0.216
+  #   0.12      0.478   0.208    0.214
+  #
+  # IT BUYS EFFICIENCY WITH PURITY AND THERE IS NO SETTING WHERE IT DOES NOT. That is the same
+  # trade CLUE makes (0.315 / 0.251), so quote both numbers or neither. 0.05 sits where efficiency
+  # is still climbing steeply and purity has not yet collapsed; 0.01 is the value that MATCHES
+  # CLUE's purity, which is the fairer setting for a like-for-like headline claim.
+  # `scripts.scan_working_points` draws the whole curve, which is the honest form of this choice.
+  chain_link_distance: 0.05
+  chain_link_scan: [0.0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.12]
