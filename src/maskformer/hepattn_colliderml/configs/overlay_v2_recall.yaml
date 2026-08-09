@@ -1,0 +1,66 @@
+# VARIANT 2: a recall-biased BCE, to stop the head under-claiming.
+#
+#   OVERLAYS="overlay_pu200_barrel.yaml overlay_v2_recall.yaml" ./train_pu200.sh
+#
+# THE MEASUREMENT. Each query sees ~22,000 cells of which ~13 are positive -- 1:1700. Plain BCE at
+# equal weight is very nearly minimised by claiming nothing, and the trained model duly assigns
+# UNDER 2% probability to a third of a high-energy shower's energy. That is confident exclusion
+# rather than hedging, which is why lowering the mask threshold from 0.5 to 0.02 recovers almost
+# none of it (efficiency 0.143 -> 0.152) and why the cluster holds ~6 cells whatever the shower's
+# size.
+#
+# hepattn's `mask_bce_loss` takes no `pos_weight`, so mask_variants.py reimplements the BCE term
+# with one. 20.0 is roughly a quarter of the true imbalance -- deliberately short of it, because
+# the full 1700 would swamp every other term.
+#
+# WATCH: recall is bought with precision. This is the intended trade and it is only a gain if the
+# purity it costs is less than the efficiency it buys.
+
+trainer:
+  logger:
+    init_args:
+      project: colliderml-calo-variants
+
+model:
+  model:
+    init_args:
+      # `tasks` is a LIST, so jsonargparse replaces it wholesale -- the whole list is restated.
+      # The classification head is verbatim from calo_clustering.yaml.
+      tasks:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.task.ObjectClassificationTask
+              init_args:
+                name: flow_valid
+                input_object: query
+                output_object: flow
+                target_object: particle
+                losses:
+                  object_bce: 1.0
+                costs:
+                  object_bce: 0
+                dim: 256
+                null_weight: 1.0
+                mask_queries: false
+                has_intermediate_loss: true
+                has_first_layer_loss: false
+                eval_threshold: 0.2
+
+            # The ONLY change from calo_clustering.yaml: the class, and the one switch named below.
+            # ExtendedObjectHitMaskTask with every switch at its default IS ObjectHitMaskTask.
+            - class_path: hepattn.experiments.colliderml.mask_variants.ExtendedObjectHitMaskTask
+              init_args:
+                name: flow_calohit_assignment
+                input_constituent: calohit
+                input_object: query
+                output_object: flow
+                target_object: particle
+                losses:
+                  mask_dice: 1.0
+                  mask_bce: 1.0
+                costs:
+                  mask_dice: 1.0
+                null_weight: 1.0
+                dim: 256
+                bce_pos_weight: 20.0

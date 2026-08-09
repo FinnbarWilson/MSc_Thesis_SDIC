@@ -10,6 +10,14 @@
 # Overrides, same interface as the old slurm script:
 #   NUM_TRAIN=4000 MAX_EPOCHS=2 ./train_pu200.sh
 #   CKPT=logs/<run>/ckpts/last.ckpt ./train_pu200.sh     # resume
+#
+# STACKING OVERLAYS. The mask-head variants layer ON TOP of the pu200 barrel config, so they need
+# two overlay files rather than one. OVERLAYS takes a space-separated list, applied in order, and
+# later files win on conflicts:
+#   OVERLAYS="overlay_pu200_barrel.yaml overlay_v1_coverage.yaml" ./train_pu200.sh
+#   OVERLAYS="overlay_pu200_barrel.yaml overlay_v2_recall.yaml"      ./train_pu200.sh
+#   OVERLAYS="overlay_pu200_barrel.yaml overlay_v3_propagation.yaml" ./train_pu200.sh
+# OVERLAY (singular) still works and is unchanged, so nothing that used it before needs editing.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,8 +56,21 @@ if n > 6750:
 print(f"window check OK: train [0,{n}) is disjoint from the store windows")
 PY
 
+# Build the --config chain. OVERLAYS wins if set; otherwise fall back to the single OVERLAY, whose
+# default is unchanged, so a bare ./train_pu200.sh still runs exactly what it always did.
+CONFIG_ARGS=(--config configs/calo_clustering.yaml)
+for overlay in ${OVERLAYS:-${OVERLAY:-overlay_pu200_barrel.yaml}}; do
+    if [ ! -f "configs/$overlay" ]; then
+        echo "ABORT: no such overlay: $EXP_DIR/configs/$overlay"
+        echo "       (env.sh re-syncs configs from the repository on every run -- if you just added"
+        echo "        it, check it is in src/maskformer/hepattn_colliderml/configs/)"
+        exit 1
+    fi
+    CONFIG_ARGS+=(--config "configs/$overlay")
+    echo "overlay   : $overlay"
+done
+
 exec "$PYTHON" main.py fit \
-    --config configs/calo_clustering.yaml \
-    --config "configs/${OVERLAY:-overlay_pu200_barrel.yaml}" \
+    "${CONFIG_ARGS[@]}" \
     --data.pin_memory false \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
