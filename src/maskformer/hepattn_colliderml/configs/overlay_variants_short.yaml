@@ -1,0 +1,58 @@
+# Shared short schedule for the mask-head variant comparison. Applied LAST, on top of the barrel
+# config and one overlay_v*.yaml:
+#
+#   main.py fit --config configs/calo_clustering.yaml \
+#               --config configs/overlay_pu200_barrel.yaml \
+#               --config configs/overlay_v3_propagation.yaml \
+#               --config configs/overlay_variants_short.yaml
+#
+# WHY A SEPARATE CONTROL RUN IS NEEDED, AND WHY IT CANNOT BE THE 2-EPOCH ONE
+#
+# The completed barrel run (logs/ColliderML_Calo_Clustering_20260806-T104923: eff@0.5 0.631,
+# pur@0.5 0.319, 19.8 cells per flow against 15 true) is a 2-epoch, 12,000-step result. Scoring
+# 1-epoch variants against it would confound the variant with training length.
+#
+# Its epoch-0 checkpoint looks like a free 1-epoch control, and it is NOT one. OneCycleLR is sized
+# from TOTAL steps, so at step 6,000 of a 12,000-step schedule the control sat mid-schedule at a
+# high learning rate, whereas a run scheduled over 6,000 steps has finished its decay. Same step
+# count, different optimiser state, not comparable.
+#
+# So all FOUR runs -- control and three variants -- use this file. Every one gets a complete
+# OneCycle over the same number of steps, and the only difference between them is the variant
+# switch. That is what VARIANTS_HANDOVER.md section 5 asks for.
+#
+# SIZING, from the measured rate rather than the handover's
+#
+# VARIANTS_HANDOVER.md section 5 quotes 0.153 it/s and 2 epochs. That predates the dataloader work
+# in commit 6cd7250: with num_workers 24 and row_group_cache_size 3 the completed run measured
+# 0.43 it/s (epoch 1 in 3:51:50), nearly 3x faster.
+#
+#   4000 steps / 0.43 it/s = 2.6 h + validation ~= 2.8 h per run
+#   4 runs sequential ~= 11.2 h
+#
+# WHAT 4,000 STEPS BUYS, STATED HONESTLY. It is a signal test, and a shorter one than the handover
+# intended. For reference the control moved a long way between 1,500 and 12,000 steps
+# (eff 0.664 -> 0.631, pur 0.118 -> 0.319), so 4,000 is well short of converged and an arm that
+# only helps late will not show here. It is enough to separate collapse from non-collapse -- the
+# mask-loss sweep did that at 1,500 -- and section 5 notes the cluster-size-versus-particle-size
+# slope is more sensitive than efficiency at short training lengths, so score on that first.
+#
+# If a variant looks promising, re-run THAT ONE at 2+ epochs rather than lengthening all four.
+
+data:
+  # One pass, so the OneCycle schedule completes. 4000 rather than the barrel config's 6000 purely
+  # to fit four runs into a working day; nothing else depends on the number.
+  num_train: 4000
+  num_val: 50
+  num_test: 50
+
+trainer:
+  max_epochs: 1
+  # Two validations per run, giving a mid-point as well as an end point.
+  val_check_interval: 0.5
+  # A runaway guard at roughly 2x the expected 2.8 h, not a plan. v3 adds a kNN build per step and
+  # may be slower than the others; if this triggers, that is the reason to check first.
+  max_time: "00:06:00:00"
+  logger:
+    init_args:
+      project: colliderml-calo-variants

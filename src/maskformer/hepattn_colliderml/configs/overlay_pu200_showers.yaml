@@ -1,0 +1,108 @@
+# pu200 barrel with SHOWER-LEVEL TRUTH: one target per particle entering the calorimeter.
+#
+#   OVERLAYS="overlay_pu200_barrel.yaml overlay_pu200_showers.yaml" ./train_pu200.sh
+#
+# LAYERS ON TOP OF overlay_pu200_barrel.yaml and must be passed after it. That file contributes the
+# barrel eta cut, the data paths, the worker/cache sizing, the dice 20 + focal 1 objective and the
+# schedule; this file changes the truth definition and the query budget, and nothing else.
+#
+# The pu0 counterpart is overlay_pu0_showers.yaml, and the argument for the change is the same one:
+# ColliderML's particle table is the full Geant record, so a showering particle appears alongside
+# every secondary it made, and treating each as an independent target asks the model to split
+# things that sit inside one shower core. See that file for the pu0 measurements.
+#
+# BUT THE ARITHMETIC IS QUITE DIFFERENT HERE, AND THE DIFFERENCE IS THE POINT.
+#
+# Measured over 800 barrel events on shards 0/11/23/37/52/68/81/95, under this config's cuts:
+#
+#                        targets/event                     energy       hit
+#                   mean   p99   p99.9    max            coverage   coverage
+#   A per-particle  1499  2129    2523   2662              0.385      0.386
+#   B collapsed     1129  1481    1579   1712              0.675      0.616
+#
+# At pu0 the collapse cut targets by 2.9x (536 -> 186). Here it cuts them by only 1.33x, because
+# most of what fills a pu200 barrel event is not shower fragmentation at all -- it is 200 pileup
+# vertices each sending their own particles into the calorimeter, and those entered separately so
+# nothing merges them. Over-fragmentation is real at pu200 but it is no longer the dominant term.
+#
+# THE ENERGY COVERAGE IS STILL WHY THIS IS WORTH DOING: 0.385 -> 0.675 nearly doubles the fraction
+# of the calorimeter that belongs to any target at all, which is the quantity that was capping
+# purity. PU200_STATUS.md already identified a "38% owned fraction" as the cause of an earlier
+# failure and treated the barrel cut as the fix; this shows the barrel cut addressed the symptom
+# and left 61.5% of barrel energy still unowned.
+#
+# THE REMAINING 32.5% IS THE pT CUT, NOT THE COLLAPSE. Dropping particle_min_pt entirely takes
+# coverage to 0.973 -- and targets/event to 3,381 with a max of 4,840, which is not a tractable
+# query budget at any batch size. So pT 0.5 stays, and the missing third is an explicit truth
+# floor to report at pu200 rather than something to engineer away. It is a genuinely harder
+# condition than pu0, where the same collapse reached 0.864 coverage.
+#
+# A CORRECTION TO overlay_pu200_barrel.yaml WHILE HERE. It sizes 2100 queries from "1,342
+# targets/event mean, 1,750 max". Over these 800 events the OLD definition measures 1,499 mean and
+# 2,662 max, with p99 at 2,129 -- so the current 2100 truncates roughly 1% of events rather than
+# none. That measurement was evidently taken over a smaller sample. It does not change any
+# published number, but it does mean the query budget there was tighter than believed.
+
+data:
+  # THE CHANGE. Same flag and same measured front face as pu0 -- the calorimeter geometry does not
+  # depend on the pileup condition, and using one number for both is what keeps the two conditions
+  # comparable.
+  particle_collapse_shower_secondaries: true
+  calo_entry_radius: 1252.0
+  calo_entry_abs_z: 3202.0
+
+  # 1600, was 2100. SIZED FROM THE MEASUREMENT ABOVE, on the same standard as pu0's 400:
+  #
+  #   cap 1400 -> 3.750% of events truncate
+  #   cap 1500 -> 0.750%
+  #   cap 1600 -> 0.125%      <- this
+  #   cap 1800 -> 0.000%
+  #
+  # 1600 and 1700 truncate the same 0.125% -- a single event at 1,712 -- so 1600 is the clean
+  # choice and anything above it buys nothing until 1800.
+  #
+  # THE THROUGHPUT GAIN IS BIGGER THAN THE 0.76x QUERY RATIO SUGGESTS. overlay_pu200_barrel.yaml
+  # records that the Hungarian matcher is ~300 ms per solve at 2100 queries and runs once per
+  # decoder layer, so ~1.2 s of every 2.33 s step is single-threaded work in the main process that
+  # no number of dataloader workers touches. LAP is O(n^3), so 1600 queries makes that term
+  # (1600/2100)^3 = 0.44x. See the trainer note below for what that does and does not license.
+  #
+  # MUST EQUAL model...decoder.num_queries below.
+  event_max_num_particles: 1600
+
+trainer:
+  # LEFT AT overlay_pu200_barrel.yaml's 5, DELIBERATELY UNSIZED FOR THIS CONFIGURATION, and that is
+  # a handoff rather than a decision.
+  #
+  # Extrapolating the query cut gives ~0.72 it/s against the measured 0.43, i.e. ~2.3 h/epoch and
+  # ~12 h for 5 epochs against the current ~21 h. DO NOT COMMIT TO THAT NUMBER. This file's own
+  # history is a sequence of throughput estimates that were too optimistic -- PU200_STATUS.md §6
+  # says treat any short benchmark as an upper bound, the barrel overlay then de-rated a benchmark
+  # by a penalty measured on a different config and was still wrong by 2x in the other direction,
+  # and the lesson it draws is "size from a few hundred steps of the real run before committing".
+  #
+  # SO: LAUNCH, WATCH ~300 STEPS, THEN SET THIS AND RELAUNCH. OneCycleLR is sized from total steps
+  # and cannot be resized mid-run, so a schedule set from a guess either ends at a high learning
+  # rate (too many epochs) or leaves the card idle (too few). The 28 h max_time guard inherited
+  # from the barrel overlay stays as the runaway backstop and should not be relied on as sizing.
+  max_epochs: 5
+
+model:
+  model:
+    init_args:
+      decoder:
+        # Restated in full rather than overriding num_queries alone, for the reason
+        # overlay_pu200.yaml gives: YAML anchors do not cross files, and a partial mapping risks
+        # jsonargparse replacing the block instead of merging into it, silently resetting
+        # num_decoder_layers and decoder_layer_config to their defaults. KEEP IN SYNC WITH
+        # overlay_pu200_barrel.yaml; the only intended difference is num_queries.
+        num_decoder_layers: 4
+        num_queries: 1600         # must equal data.event_max_num_particles above
+        mask_attention: true
+        use_query_masks: false
+        decoder_layer_config:
+          dim: 256
+          norm: FastLayerNorm
+          hybrid_norm: true
+          dense_kwargs: {activation: SwiGLU}
+          attn_kwargs: {bias: false}

@@ -109,8 +109,12 @@ def calibrate_layers(dataset: ColliderMLDataset, num_events: int) -> dict[str, l
             if selected.any():
                 pooled[name].append(geo.layer_depth(name, x[selected], y[selected], z[selected]))
 
-    centres = {name: geo.calibrate_layer_centres(np.concatenate(depths)) for name, depths in pooled.items() if depths}
-    geo.check_layer_counts(centres)
+    # Only subsystems that actually have cells. A barrel-only sample (overlay_pu200_barrel.yaml
+    # cuts |eta| < 0.88) has no endcap cells at all, so `ece` and `hce` are legitimately absent
+    # and the counts are checked against what is present rather than against all four.
+    populated = [name for name, depths in pooled.items() if depths]
+    centres = {name: geo.calibrate_layer_centres(np.concatenate(pooled[name])) for name in populated}
+    geo.check_layer_counts(centres, populated=populated)
     return {name: values.tolist() for name, values in centres.items()}
 
 
@@ -201,10 +205,26 @@ def extract_event(
 
     subsystem = subsystem_codes(detector)
     layer = np.zeros(n_hits, dtype=np.uint8)
+    assigned = np.zeros(n_hits, dtype=bool)
     for name, centres in layer_centres.items():
         selected = subsystem == fmt.SUBSYSTEM_CODE[name]
         if selected.any():
             layer[selected] = geo.assign_layers(name, x[selected], y[selected], z[selected], centres)
+            assigned |= selected
+
+    # Every cell must belong to a CALIBRATED subsystem. `layer` starts at zeros and is only
+    # written for subsystems present in `layer_centres`, so a cell in an uncalibrated one would
+    # silently be recorded as layer 0 -- a wrong value that no downstream check would catch.
+    # This is reachable now that calibration accepts a subset of subsystems: the calibration scan
+    # reads only the first `--layer-calib-events`, so a subsystem that is empty there but
+    # populated later in the window would land here.
+    if not assigned.all():
+        missing = sorted({fmt.SUBSYSTEM_ORDER[c] for c in np.unique(subsystem[~assigned])})
+        msg = (
+            f"{int((~assigned).sum())} cells belong to subsystems with no layer calibration ({missing}). "
+            "Raise --layer-calib-events so the calibration scan sees them, or exclude them from the sample."
+        )
+        raise ValueError(msg)
 
     # Geometry order: neighbouring cells end up adjacent, which is what makes the store and
     # every downstream label array compress.
@@ -395,6 +415,15 @@ def main() -> None:
             "particle_max_abs_eta": dataset.particle_max_abs_eta,
             "particle_min_num_calohits": dataset.particle_min_num_calohits,
             "event_max_num_particles": trained.get("event_max_num_particles"),
+            # Which particles ARE the targets, as opposed to which of them survive the cuts above.
+            # Without this the store cannot tell a per-Geant-particle truth from a shower-level
+            # one -- the three cuts are identical either way, while the target set differs by 3x
+            # and the energy it accounts for by 2.7x. Two stores dumped under different
+            # definitions would then compare as equal, which is the exact failure
+            # config/experiment.yaml exists to prevent.
+            "particle_collapse_shower_secondaries": dataset.particle_collapse_shower_secondaries,
+            "calo_entry_radius": dataset.calo_entry_radius,
+            "calo_entry_abs_z": dataset.calo_entry_abs_z,
         },
         detector={
             "subsystem_order": list(fmt.SUBSYSTEM_ORDER),

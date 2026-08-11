@@ -31,7 +31,7 @@ event, which undercounts them (hcb gives 26 per event against its true 36) and w
 the layer index mean different things in different events.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -138,9 +138,28 @@ def assign_layers(subsystem: str, x: np.ndarray, y: np.ndarray, z: np.ndarray, c
     return index.astype(np.uint8)
 
 
-def check_layer_counts(centres_by_subsystem: Mapping[str, np.ndarray]) -> None:
-    """Fail loudly if calibration did not recover the expected layer counts."""
+def check_layer_counts(centres_by_subsystem: Mapping[str, np.ndarray], populated: Iterable[str] | None = None) -> None:
+    """Fail loudly if calibration did not recover the expected layer counts.
+
+    Args:
+        centres_by_subsystem: calibrated layer centres, keyed by subsystem.
+        populated: the subsystems that actually HAVE cells in the sample. Defaults to all four.
+            A barrel-only sample legitimately has none in the endcaps, and requiring all four
+            there would reject a valid store -- but defaulting to all four keeps the check at
+            full strength for anyone who does not pass it.
+
+    WHY A SUBSET IS ALLOWED AT ALL. `configs/overlay_pu200_barrel.yaml` cuts |eta| < 0.88, which
+    removes every endcap cell, so calibration finds {'ecb': 48, 'hcb': 36} and nothing else. That
+    is correct, not a failure. The guard's real job -- catching a dataset change that silently
+    renumbers layers -- is unaffected: every subsystem that HAS cells is still required to produce
+    exactly its expected count, and a subsystem that has cells cannot be absent from `populated`
+    because the caller derives that set from the same scan.
+    """
+    expected = dict(EXPECTED_NUM_LAYERS) if populated is None else {name: EXPECTED_NUM_LAYERS[name] for name in populated}
+    if not expected:
+        msg = "Layer calibration found no populated subsystems at all; the sample appears to be empty."
+        raise ValueError(msg)
     found = {name: len(centres) for name, centres in centres_by_subsystem.items()}
-    if found != dict(EXPECTED_NUM_LAYERS):
-        msg = f"Layer calibration gave {found}, expected {dict(EXPECTED_NUM_LAYERS)}. Inspect the depth distribution before writing a store."
+    if found != expected:
+        msg = f"Layer calibration gave {found}, expected {expected}. Inspect the depth distribution before writing a store."
         raise ValueError(msg)

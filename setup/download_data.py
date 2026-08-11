@@ -30,7 +30,19 @@ from huggingface_hub import snapshot_download
 
 REPO = "CERN/ColliderML-Release-1"
 TOTAL_SHARDS = 1000  # the "-of-01000" in every filename
-EVENTS_PER_SHARD = 100
+
+# Rows per shard, which is events per shard -- and it is NOT the same for the two pileup
+# conditions. Read from the parquet footers on the Hub rather than assumed:
+#
+#   ttbar_pu0    1,000 rows/shard  ->  1,000,000 events in the release,  ~1.06 GB/shard
+#   ttbar_pu200    100 rows/shard  ->    100,000 events in the release,  ~2.97 GB/shard
+#
+# pu0 packs 10x more events into a shard of a third the size, because a pu0 event holds ~22k
+# calo hits against pu200's ~532k. This used to be a single constant of 100, taken from pu200,
+# which made the printed event count wrong by 10x for any pu0 download -- 100 shards of pu0 is
+# 100,000 events, not 10,000. Nothing else consumed it, so the effect was a misleading log line
+# rather than a wrong download, but that line is what anyone sizing a download reads.
+EVENTS_PER_SHARD: dict[str, int] = {"pu0": 1000, "pu200": 100}
 COLLECTIONS = ("calo_hits", "particles")
 
 
@@ -54,7 +66,8 @@ def main() -> None:
     print(f"dataset   : {prefix}")
     print(f"dest      : {args.dest}")
     print(f"files     : {len(patterns)} ({args.shards} shards x {len(COLLECTIONS)} collections)")
-    print(f"events    : {args.shards * EVENTS_PER_SHARD}", flush=True)
+    per_shard = EVENTS_PER_SHARD[args.pileup]
+    print(f"events    : {args.shards * per_shard:,} ({per_shard:,}/shard for {args.pileup})", flush=True)
 
     # Keep the Hub's own caches beside the data rather than in ~/.cache: the Xet chunk cache is
     # large and / is the small disk on this machine.

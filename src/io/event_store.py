@@ -54,6 +54,11 @@ CONTRACT_KEYS: tuple[tuple[str, ...], ...] = (
     ("particle_selection", "particle_min_pt"),
     ("particle_selection", "particle_max_abs_eta"),
     ("particle_selection", "particle_min_num_calohits"),
+    # The truth DEFINITION, not a cut on it: whether Geant secondaries made inside the
+    # calorimeter were merged onto the particle that entered it. The three cuts above are
+    # identical under both definitions while the target set differs threefold, so without this
+    # key a store dumped under one would validate against a config describing the other.
+    ("particle_selection", "particle_collapse_shower_secondaries"),
     ("detector", "subsystem_order"),
     ("detector", "subsystem_calibration"),
 )

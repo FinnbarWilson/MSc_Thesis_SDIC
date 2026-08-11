@@ -36,6 +36,16 @@ import matplotlib.pyplot as plt
 #: not a third competitor.
 ALGO_COLOURS: Mapping[str, str] = {
     "maskformer": "#845B97",
+    # A DARKER SHADE OF THE MASKFORMER VIOLET, on purpose: chaining is the same model with a
+    # post-processing stage on top, not a third method, and sharing the hue says so at a glance
+    # while the darker value reads as "further processed". Giving it its own hue would make the
+    # figures look like a three-way contest between two models and a classical baseline.
+    #
+    # It also has to be HERE to be drawn at all: figures.py builds its plotting order from the
+    # keys of this mapping, so an algorithm absent from it is dropped silently, with no warning
+    # and no missing-data message. maskformer_chained was scored and invisible until this entry
+    # existed -- and it is the strongest pu200 result (eff 0.601 against CLUE's 0.524).
+    "maskformer_chained": "#4F3462",
     "clue": "#00B945",
     # Only ever drawn beside the mask head, in the one figure that compares the two readings.
     # Everywhere else "MaskFormer" means the mask head, because two rows for one model in
@@ -48,6 +58,9 @@ ALGO_COLOURS: Mapping[str, str] = {
 
 ALGO_LABELS: Mapping[str, str] = {
     "maskformer": "MaskFormer",
+    # Chaining only -- scripts/score.py:maskformer_chained_labels applies chain_labels and
+    # nothing else, so this must NOT be labelled "merge + chaining".
+    "maskformer_chained": "MaskFormer + chaining",
     "maskformer_incidence": "MaskFormer (incidence head)",
     "clue": "CLUE",
     "truth": "Truth",
@@ -57,6 +70,7 @@ ALGO_LABELS: Mapping[str, str] = {
 
 ALGO_MARKERS: Mapping[str, str] = {
     "maskformer": "o",
+    "maskformer_chained": "P",
     "maskformer_incidence": "^",
     "clue": "s",
     "truth": "^",

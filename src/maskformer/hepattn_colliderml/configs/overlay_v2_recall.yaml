@@ -56,9 +56,27 @@ model:
                 input_object: query
                 output_object: flow
                 target_object: particle
+                # MATCHED TO THE PU200 CONTROL, and FOCAL IS DELIBERATELY ABSENT HERE -- this is the
+                # one arm where that is intentional.
+                #
+                # The control's per-cell term is focal, which handles the 1:1700 imbalance by
+                # suppressing easy negatives. v2's whole hypothesis is that an explicit
+                # `pos_weight` handles it better. Keeping focal AND adding weighted BCE would run
+                # both remedies at once and double-count: focal IS BCE times (1-p_t)^2, so the two
+                # overlap almost entirely and neither effect could be attributed.
+                #
+                # So the per-cell term is SWAPPED, not stacked: dice stays at the control's 20.0,
+                # focal comes out, and bce_pos_weight below puts weighted BCE in its place. That
+                # keeps this a one-variable change -- "which per-cell term" -- against a control
+                # that trains.
+                #
+                # The pu0 weights this file shipped with (dice 1 + bce 1) collapse on pu200 barrel;
+                # see overlay_v1_coverage.yaml and the sweep table in overlay_pu200_barrel.yaml.
+                # NOTE the plain `mask_bce` entry is gone too: leaving it would have added an
+                # UNWEIGHTED BCE alongside the weighted one, which is the imbalance this arm exists
+                # to remove.
                 losses:
-                  mask_dice: 1.0
-                  mask_bce: 1.0
+                  mask_dice: 20.0
                 costs:
                   mask_dice: 1.0
                 null_weight: 1.0

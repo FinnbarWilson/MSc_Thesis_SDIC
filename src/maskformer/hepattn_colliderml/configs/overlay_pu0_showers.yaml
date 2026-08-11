@@ -1,0 +1,128 @@
+# pu0 with SHOWER-LEVEL TRUTH: one target per particle entering the calorimeter, not per Geant
+# particle that deposited in it.
+#
+#   OVERLAYS="overlay_pu0_dice.yaml overlay_pu0_showers.yaml" ./train_pu0.sh
+#
+# LAYERS ON TOP OF overlay_pu0_dice.yaml and must be passed after it. It contributes the ce-ai-1
+# data paths, the worker count and the dice-dominant mask objective; this file changes the truth
+# definition and the query budget that follows from it, and nothing else. The mask objective is
+# deliberately NOT touched here -- see "WHAT IS NOT CHANGED" below.
+#
+# WHY THE TRUTH DEFINITION CHANGED
+#
+# ColliderML's particle table is the full Geant record: when a particle showers in the
+# calorimeter, every secondary it makes is its own row, and those secondaries make their own.
+# data.py treated all of them as independent truth objects. Measured over 2,800 pu0 events on
+# shards 0/7/17/31/55/73/88:
+#
+#   85.7% of targets were non-primary Geant secondaries
+#   71.8% of targets were BORN INSIDE the calorimeter volume
+#   83%   of targets sat in a shower that had been split into more than one target
+#   median separation between sibling fragments of one shower: dR 0.045, 37% within dR 0.02
+#   only 31.7% of the calorimeter's energy belonged to any target at all
+#
+# and the PDG composition was 21% protons / 37% e+- / 1% photons -- nuclear spallation products
+# and shower electrons, not a particle list. A ttbar calorimeter truth that is 1% photons is not
+# describing the physics objects anyone wants reconstructed.
+#
+# Fragments separated by dR 0.02 inside one shower core cannot be told apart by any algorithm, so
+# that definition put a ceiling on efficiency and purity that had nothing to do with the method
+# being measured. results/pu0/ shows the ceiling directly: oracle_geometric, handed the true
+# particle count AND the true shower axes, still only reached efficiency 0.61.
+#
+# WHAT THE NEW DEFINITION IS
+#
+# Each deposit is re-pointed at the ancestor that ENTERED the calorimeter -- climb parent_id while
+# the particle was born inside the calo volume, stop at the first one produced before the front
+# face. Deliberately NOT the generator-level root: a pi0 decays to two photons at the primary
+# vertex and those are two separate showers, which collapsing to the root would fuse (measured 91
+# targets/event at 137 cells each -- too coarse). Stopping at the calo face keeps them apart.
+#
+#   targets/event   536 -> 186        energy coverage   0.317 -> 0.864
+#   median cluster   15 -> 73 cells   hit coverage      0.376 -> 0.810
+#
+# The remaining 13.6% of energy belongs to particles entering the calorimeter below pT 0.5 GeV.
+# That is now an explicit, reportable truth floor rather than an unexamined 68% hole.
+#
+# WHAT IS NOT CHANGED, ON PURPOSE
+#
+# The mask objective stays at overlay_pu0_dice.yaml's dice 20 + focal 1, the optimiser stays
+# AdamW at batch 1, and the schedule stays 7 epochs over 20,000 events. This run exists to
+# establish what shower-level truth does on its own; moving the objective or the optimiser in the
+# same run would make the result unattributable, which is the failure PU200_STATUS.md section 7
+# warns about. Note in passing that the argument for dice-dominance is now WEAKER, not stronger:
+# it was chosen at pu200 to stop the mask head over-claiming on a target with positive rate
+# 1.81e-04, and this target has positive rate 3.82e-03 -- 21x denser. If purity is healthy here,
+# re-testing dice+bce is the natural follow-up, on its own.
+
+data:
+  # THE CHANGE. Off everywhere else, so every existing config and the pu200 results keep their
+  # historical truth definition until they are deliberately moved.
+  particle_collapse_shower_secondaries: true
+
+  # The ColliderML calorimeter front face, in mm. MEASURED from the calo-hit cloud, not assumed:
+  # ECAL barrel spans r 1252-1519, ECAL endcap starts at |z| 3202. The answer is insensitive to
+  # moving this inwards (r > 1000 / |z| > 2800 gives 156 targets/event against 176) and only
+  # breaks if it is pushed INSIDE the ECAL, where secondaries made in the first layers stop
+  # counting as shower products (r > 1400 gives 401).
+  calo_entry_radius: 1252.0
+  calo_entry_abs_z: 3202.0
+
+  # 400, was 1000. SIZED FROM THE SAME 2,800-EVENT MEASUREMENT, not chosen: under the new
+  # definition targets/event is mean 186, p99 361, p99.9 434, max 488.
+  #
+  #   cap 350 -> 1.357% of events truncate
+  #   cap 400 -> 0.321%
+  #   cap 500 -> 0.000%
+  #
+  # 400 is the knee. 500 would remove the last 0.3% for 25% more mask-logit memory and throughput,
+  # which is not the right trade while another user holds 47 GB of this GPU. For scale, the 1000
+  # this replaces truncated 3.6% of events -- so this is a strict improvement in coverage as well
+  # as a 2.5x cut in the [queries x cells] mask tensor.
+  #
+  # TRUNCATION IS SILENT (data.py _pad_particle_targets_inplace slices the overflow away), so the
+  # 0.3% is a real if small defect and the event store's `truncated` column is what to check it
+  # against after the run.
+  #
+  # MUST EQUAL model...decoder.num_queries below.
+  event_max_num_particles: 400
+
+trainer:
+  # 3, was 7. RESIZED FROM A MEASUREMENT ON THIS BOX, and the change is about the box rather than
+  # about the truth definition. calo_clustering.yaml's 7 was sized from DIAS at 1.94 events/s
+  # (20.4 h). ce-ai-1 does not run at that rate: the killed pu0 run reached epoch 2 of 7 in 26 h,
+  # and a clean training-only benchmark of this configuration measured 0.70 it/s. 7 epochs here is
+  # ~56 h; 3 is 60,000 optimiser steps in ~24 h including validation.
+  #
+  # 60,000 steps is 3x the ~20,000 that overlay_long_schedule.yaml diagnosed as step-starved, so
+  # this is not a return to the undertrained regime -- it is the schedule the hardware supports.
+  #
+  # SIZED CONSERVATIVELY ON PURPOSE because this GPU is shared: another user held 41 GB and a
+  # matching share of the SMs while the benchmark ran, and their job ending or a third starting
+  # moves the rate either way. OneCycleLR is sized from total steps, so a run that overruns its
+  # walltime never reaches its decay phase and its final checkpoint is taken at a high learning
+  # rate -- the waste recorded in ce_ai_1/PU200_STATUS.md section 6. Undershooting the walltime
+  # costs nothing; overshooting costs the run.
+  #
+  # RESIZE THIS AND lrs_config TOGETHER, as calo_clustering.yaml says.
+  max_epochs: 3
+
+model:
+  model:
+    init_args:
+      decoder:
+        # Restated in full rather than overriding num_queries alone, for the reason
+        # overlay_pu200.yaml gives: YAML anchors do not cross files, and a partial mapping risks
+        # jsonargparse replacing the block instead of merging into it, silently resetting
+        # num_decoder_layers and decoder_layer_config to their defaults. KEEP IN SYNC WITH
+        # calo_clustering.yaml; the only intended difference is num_queries.
+        num_decoder_layers: 4
+        num_queries: 400          # must equal data.event_max_num_particles above
+        mask_attention: true
+        use_query_masks: false
+        decoder_layer_config:
+          dim: 256                # anchors do not cross files; this is *dim from calo_clustering.yaml
+          norm: FastLayerNorm
+          hybrid_norm: true
+          dense_kwargs: {activation: SwiGLU}
+          attn_kwargs: {bias: false}

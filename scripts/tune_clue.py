@@ -63,7 +63,22 @@ def main() -> None:
         "n_tune_events": len(records),
         "subsystems": {},
     }
+    # A subsystem with no cells is SKIPPED, not tuned. `detectors` lists all four because it is
+    # contract-checked against the store's subsystem_order, which is the code's enumeration and
+    # always names four -- but a barrel-only sample (|eta| < 0.88) contains cells in `ecb` and
+    # `hcb` only. Tuning the empty two would spend a full Optuna study each optimising a metric
+    # computed over nothing, and record parameters that read as if they had been measured.
+    from src.clue.pipeline import SUBSYSTEM_CODE  # noqa: PLC0415
+
+    populated, empty = [], []
     for subsystem in cfg["detectors"]:
+        n = sum(int((record.subsystem == SUBSYSTEM_CODE[subsystem]).sum()) for record in records)
+        (populated if n else empty).append(subsystem)
+    if empty:
+        print(f"skipping {empty}: no cells in the tune store (barrel-only sample?)", flush=True)
+        result["subsystems_empty"] = empty
+
+    for subsystem in populated:
         print(f"\n=== {subsystem} ===", flush=True)
         params, value = tune_subsystem(records, subsystem, storage_url=args.storage)
         result["subsystems"][subsystem] = {"parameters": params, "objective": value}

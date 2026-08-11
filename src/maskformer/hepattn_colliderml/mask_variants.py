@@ -103,6 +103,18 @@ class ExtendedObjectHitMaskTask(ObjectHitMaskTask):
                 adjacency rather than merely rank.
         """
         super().__init__(*args, **kwargs)
+        # (source coordinate tensor, adjacency) for the most recent event. The decoder calls this
+        # task's forward ONCE PER DECODER LAYER, and the neighbour graph depends only on cell
+        # coordinates -- not on the query embeddings that change between layers -- so without this
+        # the kNN is rebuilt 4x per step for an identical result. Measured at 182 ms a build on a
+        # 54k-cell barrel event, i.e. 727 ms/step of pure waste against a ~2300 ms step.
+        #
+        # Keyed by tensor IDENTITY (`is`), deliberately, not by data_ptr: the caching allocator
+        # reuses addresses, so a freed event's pointer can reappear on a later event and a
+        # ptr-keyed cache would silently propagate over the wrong graph. Holding the reference also
+        # keeps that tensor alive, which is what makes the identity check sound. It is one event of
+        # coordinates (~650 KB) and is replaced every step.
+        self._graph_cache: tuple[Tensor, Tensor] | None = None
         self.coverage_weight = coverage_weight
         self.coverage_energy_field = coverage_energy_field
         self.bce_pos_weight = bce_pos_weight
@@ -124,30 +136,52 @@ class ExtendedObjectHitMaskTask(ObjectHitMaskTask):
         if not all(k in inputs for k in coord_keys):
             raise KeyError(f"propagation needs {coord_keys} in inputs to build the neighbour graph")
 
-        coords = torch.stack([inputs[k][0] for k in coord_keys], dim=-1).to(torch.float32)
-        n = coords.shape[0]
+        # The cache key is the raw input tensor, not the stacked copy below, because `torch.stack`
+        # makes a new object every call and would never match. This one IS the same object across
+        # the decoder's layers within a step. See _graph_cache in __init__.
+        cache_key = inputs[coord_keys[0]]
+        n = int(cache_key.shape[-1])
         if n != logit.shape[-1]:
             return out
 
-        dist, idx = _knn_graph(coords, self.propagation_neighbours)
-        keep = dist <= self.propagation_radius
-        rows = torch.arange(n, device=coords.device).unsqueeze(1).expand_as(idx)[keep]
-        cols = idx[keep]
-        if rows.numel() == 0:
-            return out
+        if self._graph_cache is not None and self._graph_cache[0] is cache_key:
+            adj = self._graph_cache[1]
+        else:
+            coords = torch.stack([inputs[k][0] for k in coord_keys], dim=-1).to(torch.float32)
+            dist, idx = _knn_graph(coords, self.propagation_neighbours)
+            keep = dist <= self.propagation_radius
+            rows = torch.arange(n, device=coords.device).unsqueeze(1).expand_as(idx)[keep]
+            cols = idx[keep]
+            if rows.numel() == 0:
+                return out
 
-        # Row-normalised adjacency, so propagation is an average over a cell's neighbours and does
-        # not inflate logits in dense regions simply because they have more neighbours.
-        counts = torch.bincount(rows, minlength=n).clamp(min=1).to(logit.dtype)
-        vals = (1.0 / counts[rows]).to(logit.dtype)
-        adj = torch.sparse_coo_tensor(torch.stack([rows, cols]), vals, (n, n)).coalesce()
+            # Row-normalised adjacency, so propagation is an average over a cell's neighbours and
+            # does not inflate logits in dense regions simply because they have more neighbours.
+            # fp32, NOT logit.dtype. torch.sparse.mm has no bf16 CUDA kernel -- under the bf16-mixed
+            # precision this project trains at, the sparse product raises
+            #   NotImplementedError: "addmm_sparse_cuda" not implemented for 'BFloat16'
+            # so the adjacency and the operand are both built in fp32 and the result is cast back
+            # below. Caught by the smoke run this file's docstring asks for; the path had never
+            # executed.
+            counts = torch.bincount(rows, minlength=n).clamp(min=1).to(torch.float32)
+            vals = (1.0 / counts[rows]).to(torch.float32)
+            adj = torch.sparse_coo_tensor(torch.stack([rows, cols]), vals, (n, n)).coalesce()
+            self._graph_cache = (cache_key, adj)
 
         # [B, Q, N] -> [N, B*Q] so the sparse product is over the cell axis, then back.
         b, q, _ = logit.shape
         flat = logit.reshape(b * q, n).transpose(0, 1)
         # Finite-min padding entries would poison the average, so neutralise them first.
         finite = torch.isfinite(flat) & (flat > torch.finfo(flat.dtype).min / 2)
-        neighbour_mean = torch.sparse.mm(adj, torch.where(finite, flat, torch.zeros_like(flat)))
+        # .float() for the same bf16 reason as the adjacency above, then straight back to the
+        # logits' dtype so nothing downstream sees a precision change.
+        src = torch.where(finite, flat, torch.zeros_like(flat)).to(torch.float32)
+        # CASTING THE OPERANDS TO fp32 IS NOT ENOUGH -- autocast has to be switched off too.
+        # torch.sparse.mm is on autocast's cast list, so inside an autocast region it demotes its
+        # fp32 arguments straight back to bf16 and raises anyway. loss.py uses this same
+        # `enabled=False` context to force its costs to fp32, for the same reason.
+        with torch.autocast(device_type=flat.device.type, enabled=False):
+            neighbour_mean = torch.sparse.mm(adj, src).to(flat.dtype)
         propagated = flat + self.propagation_lambda * neighbour_mean
         out[key] = torch.where(finite, propagated, flat).transpose(0, 1).reshape(b, q, n)
         return out

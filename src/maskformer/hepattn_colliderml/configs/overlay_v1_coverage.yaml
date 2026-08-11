@@ -71,9 +71,17 @@ model:
                 input_object: query
                 output_object: flow
                 target_object: particle
+                # MATCHED TO THE PU200 CONTROL, not to pu0. This file was written on DIAS, where
+                # calo_clustering.yaml's mask loss is dice 1 + bce 1; on pu200 barrel that exact
+                # objective was MEASURED TO COLLAPSE (max mask probability 0.0995 over 113M cells,
+                # mean output equal to the target prior, no cell above threshold, so
+                # p0.5_calohit_eff is 0 by construction). See commit 6cd7250 and the sweep table in
+                # overlay_pu200_barrel.yaml. Because `tasks` is a list, restating it here REPLACES
+                # the barrel objective rather than merging into it, so leaving the pu0 weights would
+                # have trained the collapsed baseline and made the variant look falsified.
                 losses:
-                  mask_dice: 1.0
-                  mask_bce: 1.0
+                  mask_dice: 20.0
+                  mask_focal: 1.0
                 costs:
                   mask_dice: 1.0
                 null_weight: 1.0

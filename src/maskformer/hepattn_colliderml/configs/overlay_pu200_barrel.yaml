@@ -95,7 +95,26 @@ trainer:
   # THE LESSON, AGAIN: PU200_STATUS.md §6 says treat any short-benchmark rate as an upper bound.
   # De-rating it by a penalty measured on a DIFFERENT config was still too optimistic. Size from a
   # few hundred steps of the real run before committing, which is what this number now is.
-  max_epochs: 2
+  #
+  # 5, RAISED FROM 2, AND THE 2 WAS TOO CONSERVATIVE. The rate above was measured at step 200, when
+  # the run had not reached steady state: the completed 2-epoch run then did 0.43 it/s (epoch 1 in
+  # 3:51:50, both epochs in 8h40m), nearly 3x the estimate, so the 28 h guard had room for ~5 epochs
+  # all along and was given 2.
+  #
+  # THE REASON TO SPEND THEM IS MEASURED, not a hope that longer is better. Between 4,000 and 12,000
+  # steps on this exact objective the mask head went from 1.7x to 1.3x oversized, purity 0.202 ->
+  # 0.319 and F1 0.312 -> 0.423 -- and val_loss was still falling at the final checkpoint. That gain
+  # is the LOGIT RANKING improving, which matters because it is the only thing that can improve:
+  # scripts/sweep_pred_threshold.py on the 2-epoch checkpoint found F1 flat at 0.338-0.359 across
+  # the whole mask x object threshold grid, and reported "the MASKS are the bottleneck" with the
+  # object head already accepting 0.929 of true particles. A flat plateau means no cut point can
+  # help and the cells are simply ordered wrongly; training is the lever that reorders them.
+  #
+  #   5 epochs at ~4.2 h each (epoch 0 is slower while caches warm) ~= 21 h against the 28 h guard.
+  #
+  # If this is resized again, re-read the OneCycle warning above: the schedule is sized from total
+  # steps and a truncated run ends at a high learning rate.
+  max_epochs: 5
 
   # 28 h, raised from 23:30 to cover the pessimistic end of the range above. This machine has no
   # queue and no scheduler walltime (ce_ai_1/env.sh: "no walltime cap here"), so this is purely a

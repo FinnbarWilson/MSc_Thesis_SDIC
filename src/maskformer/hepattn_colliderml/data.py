@@ -74,6 +74,15 @@ class ColliderMLDataset(Dataset):
         particle_include_charged: bool = True,
         particle_include_neutral: bool = True,
         particle_min_num_calohits: int = 0,
+        # Merge Geant secondaries produced INSIDE the calorimeter back onto the particle that
+        # entered it, so one shower is one target. See _build_calo_entry_ancestors for the
+        # measurement that motivates it. False reproduces the historical per-particle truth.
+        particle_collapse_shower_secondaries: bool = False,
+        # The calorimeter front face, in the dataset's mm. Defaults are the measured ECAL barrel
+        # inner radius and ECAL endcap front |z| of the ColliderML geometry; only used when
+        # particle_collapse_shower_secondaries is on.
+        calo_entry_radius: float = 1252.0,
+        calo_entry_abs_z: float = 3202.0,
         event_max_num_particles: int | None = None,
         calohit_min_energy: float = 0.0,
         # Drop calo cells outside |eta|, i.e. restrict the event to a detector region. 0 disables
@@ -192,6 +201,28 @@ class ColliderMLDataset(Dataset):
         # For calo clustering: keep only particles that actually deposit calo energy as targets
         # (>0 excludes neutrinos and other particles that leave no calo hits). 0 disables the cut.
         self.particle_min_num_calohits = int(particle_min_num_calohits)
+
+        # Truth definition. OFF reproduces the historical behaviour: every Geant particle that
+        # deposited in the calorimeter is its own target, including the secondaries a shower
+        # creates as it develops. Measured on pu0 shards 0/17/55, that definition makes 85.7% of
+        # targets non-primary, 71.8% of them born inside the calorimeter volume, and leaves only
+        # 31.7% of the calorimeter's energy owned by any target at all -- 83% of targets sit in a
+        # shower that was split into several, with a median sibling separation of dR 0.045, well
+        # inside one Molière radius. Those fragments are not separable by any algorithm, so they
+        # put a ceiling on efficiency and purity that has nothing to do with the method.
+        #
+        # ON collapses each such fragment onto the ancestor that ENTERED the calorimeter. Not onto
+        # the generator-level root: a pi0 decays to two photons at the primary vertex and those are
+        # two genuinely separate showers, which collapsing to the root would wrongly fuse (measured
+        # 91 targets/event at 137 cells each). Stopping at the calo face keeps them apart while
+        # still merging what one shower produced, and lands at 86.4% energy coverage.
+        self.particle_collapse_shower_secondaries = bool(particle_collapse_shower_secondaries)
+        self.calo_entry_radius = float(calo_entry_radius)
+        self.calo_entry_abs_z = float(calo_entry_abs_z)
+        # Set per event by _build_calo_entry_ancestors and consumed by the contrib-id lookups.
+        # None means "no remapping", which is what the OFF path leaves it as.
+        self._contrib_id_remap: tuple[np.ndarray, np.ndarray] | None = None
+
         # Fixed number of particle slots per event. MaskFormer requires the target object dimension
         # to equal num_queries, so set this equal to num_queries in the config. None -> pad to the
         # per-event particle count only (not usable with the MaskFormer matching loss).
@@ -466,6 +497,84 @@ class ColliderMLDataset(Dataset):
         row_indices = sort_idx[search_idx[matched]]
         return row_indices, matched
 
+    def _build_calo_entry_ancestors(self, particles: ak.Record) -> np.ndarray:
+        """Row index of each particle's calorimeter-entering ancestor.
+
+        Climbs `parent_id` for as long as the current particle was BORN inside the calorimeter,
+        stopping at the first ancestor produced before the front face -- that is the particle that
+        entered the calorimeter and whose shower everything above it belongs to. A particle born
+        outside the calorimeter is its own ancestor, so tracker conversions still give one target
+        per outgoing leg.
+
+        The chain also stops when `parent_id` names a particle absent from this event's table,
+        which is how generator-level roots terminate.
+
+        Also stashes the id -> ancestor-id map in `self._contrib_id_remap`, because the calo hits
+        record its contributions by particle id and every one of them has to be re-pointed at the
+        ancestor before it is looked up.
+
+        The front face is a measurement, not a tuned parameter: the ColliderML calo-hit cloud puts
+        the ECAL barrel at r >= 1252 mm and the ECAL endcap at |z| >= 3202 mm. Moving the boundary
+        inwards barely moves the answer (r > 1000 / |z| > 2800 gives 156 targets/event against 176
+        here); only pushing it INSIDE the ECAL breaks it, since secondaries made in the first
+        layers then stop counting as shower products (r > 1400 gives 401).
+        """
+        particle_ids = ak.to_numpy(particles["particle_id"]).astype(np.int64, copy=False)
+        parent_ids = ak.to_numpy(particles["parent_id"]).astype(np.int64, copy=False)
+        num_particles = particle_ids.size
+        if num_particles == 0:
+            self._contrib_id_remap = None
+            return np.zeros(0, dtype=np.int64)
+
+        vx, vy, vz = (ak.to_numpy(particles[axis]).astype(np.float64, copy=False) for axis in ("vx", "vy", "vz"))
+        born_in_calo = (np.hypot(vx, vy) >= self.calo_entry_radius) | (np.abs(vz) >= self.calo_entry_abs_z)
+
+        parent_rows, has_parent = self._lookup_row_indices(particle_ids, parent_ids)
+        # _lookup_row_indices returns rows only for the matched entries; scatter them back so the
+        # array can be indexed by row, and leave unmatched rows pointing at themselves.
+        parent_row_of = np.arange(num_particles, dtype=np.int64)
+        parent_row_of[has_parent] = parent_rows
+
+        # Pointer doubling rather than a per-particle while loop: chains reach depth 8 here and an
+        # event holds thousands of particles, so this runs in the dataloader budget. The iteration
+        # cap also makes a corrupt cyclic chain terminate instead of hanging a worker.
+        ancestors = np.arange(num_particles, dtype=np.int64)
+        for _ in range(64):
+            climbing = born_in_calo[ancestors] & has_parent[ancestors]
+            if not climbing.any():
+                break
+            nxt = ancestors.copy()
+            nxt[climbing] = parent_row_of[ancestors[climbing]]
+            if np.array_equal(nxt, ancestors):
+                break
+            ancestors = nxt
+
+        sort_idx = np.argsort(particle_ids)
+        self._contrib_id_remap = (particle_ids[sort_idx], particle_ids[ancestors][sort_idx])
+        return ancestors
+
+    def _map_contrib_particle_ids(self, flat_contrib_particle_ids: np.ndarray) -> np.ndarray:
+        """Re-point each calo-hit contribution at its shower's calo-entering particle.
+
+        A no-op unless particle_collapse_shower_secondaries is on. Contributions from ids absent
+        from the particle table are left alone; they fail the target lookup afterwards either way.
+        """
+        if self._contrib_id_remap is None:
+            return flat_contrib_particle_ids
+
+        keys, values = self._contrib_id_remap
+        if keys.size == 0 or flat_contrib_particle_ids.size == 0:
+            return flat_contrib_particle_ids
+
+        search_idx = np.searchsorted(keys, flat_contrib_particle_ids)
+        in_bounds = search_idx < keys.size
+        found = np.zeros(flat_contrib_particle_ids.shape, dtype=bool)
+        found[in_bounds] = keys[search_idx[in_bounds]] == flat_contrib_particle_ids[in_bounds]
+
+        mapped = flat_contrib_particle_ids.copy()
+        mapped[found] = values[search_idx[found]]
+        return mapped
+
     @staticmethod
     def _build_csr_components(
         num_rows: int,
@@ -541,7 +650,7 @@ class ColliderMLDataset(Dataset):
         if contrib_counts.sum() == 0:
             return self._empty_csr_components(num_particles, num_calohits)
 
-        flat_contrib_particle_ids = ak.to_numpy(ak.flatten(calohits["contrib_particle_ids"], axis=1))
+        flat_contrib_particle_ids = self._map_contrib_particle_ids(ak.to_numpy(ak.flatten(calohits["contrib_particle_ids"], axis=1)))
         calohit_indices = np.repeat(np.arange(num_calohits, dtype=np.int64), contrib_counts)
 
         particle_ids_np = particle_ids.cpu().numpy()
@@ -635,7 +744,7 @@ class ColliderMLDataset(Dataset):
         if contrib_counts.sum() == 0:
             return incidence
 
-        flat_contrib_particle_ids = ak.to_numpy(ak.flatten(calohits["contrib_particle_ids"], axis=1))
+        flat_contrib_particle_ids = self._map_contrib_particle_ids(ak.to_numpy(ak.flatten(calohits["contrib_particle_ids"], axis=1)))
         flat_contrib_energies = ak.to_numpy(ak.flatten(calohits["contrib_energies"], axis=1)).astype(np.float32, copy=False)
         calohit_indices = np.repeat(np.arange(num_calohits, dtype=np.int64), contrib_counts)
 
@@ -988,7 +1097,7 @@ class ColliderMLDataset(Dataset):
 
         contrib_counts = ak.to_numpy(ak.num(calohits["contrib_particle_ids"], axis=1))
         if num_particles > 0 and contrib_counts.sum() > 0:
-            flat_contrib_particle_ids = ak.to_numpy(ak.flatten(calohits["contrib_particle_ids"], axis=1))
+            flat_contrib_particle_ids = self._map_contrib_particle_ids(ak.to_numpy(ak.flatten(calohits["contrib_particle_ids"], axis=1)))
             flat_contrib_energies = ak.to_numpy(ak.flatten(calohits["contrib_energies"], axis=1)).astype(np.float32, copy=False)
             flat_contrib_detector = np.repeat(self._get_calohit_detector_ids(calohits), contrib_counts)
 
@@ -1296,7 +1405,27 @@ class ColliderMLDataset(Dataset):
             sihits = self._read_event_from_file(sihit_path, event_idx)
         self._debug(f"read particles+sihits in {perf_counter() - t_read:.3f}s")
 
+        # Collapse shower secondaries onto the particle that entered the calorimeter. This must run
+        # BEFORE any target is built: it sets the contrib-id remap that every calo association
+        # below goes through, so the merged target inherits its whole shower's cells, energy and
+        # cell count and is then cut on those. Doing it after the cuts would judge a fragment on
+        # its own deposit and only then merge it.
+        entry_ancestors = None
+        if self.particle_collapse_shower_secondaries:
+            entry_ancestors = self._build_calo_entry_ancestors(particles)
+        else:
+            self._contrib_id_remap = None
+
         targets = self._build_particle_targets(particles)
+
+        if entry_ancestors is not None:
+            # Keep only the particles that entered the calorimeter. Everything else has had its
+            # deposits re-pointed at one of these, so dropping it loses no calorimeter energy --
+            # it stops being a target, not a contributor.
+            is_entry_particle = torch.from_numpy(entry_ancestors == np.arange(entry_ancestors.size))
+            self._apply_mask_to_prefixed_keys(targets, "particle_", is_entry_particle)
+            self._debug(f"after shower collapse: n_particles={targets['particle_particle_id'].size(0)}")
+
         particle_valid = self._build_particle_kinematic_mask(targets)
         self._apply_mask_to_prefixed_keys(targets, "particle_", particle_valid)
         self._debug(f"after kinematic cuts: n_particles={targets['particle_particle_id'].size(0)}")

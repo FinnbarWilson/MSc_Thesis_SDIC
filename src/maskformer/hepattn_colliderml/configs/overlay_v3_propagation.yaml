@@ -62,9 +62,12 @@ model:
                 input_object: query
                 output_object: flow
                 target_object: particle
+                # MATCHED TO THE PU200 CONTROL, not to pu0 -- dice 1 + bce 1 collapses on pu200
+                # barrel. Same reasoning as overlay_v1_coverage.yaml; see the sweep table in
+                # overlay_pu200_barrel.yaml. Propagation is then the only variable against control.
                 losses:
-                  mask_dice: 1.0
-                  mask_bce: 1.0
+                  mask_dice: 20.0
+                  mask_focal: 1.0
                 costs:
                   mask_dice: 1.0
                 null_weight: 1.0

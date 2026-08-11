@@ -483,6 +483,12 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
     hits = meta["hit_selection"]
     parts = meta["particle_selection"]
     window = meta["event_window"]
+    # The sample name comes from the STORE, not from a literal. This paragraph used to say
+    # "ttbar pu0" unconditionally, which was true while pu0 was the only dataset and became a
+    # false caption the moment a pu200 store was rendered -- the one error in a generated
+    # provenance paragraph that a reader cannot catch, because everything around it is correct.
+    # `dataset_prefix` is written by eval/dump.py from the dataloader that produced the store.
+    sample = meta.get("dataset", {}).get("dataset_prefix") or "unknown sample"
     mf = meta["maskformer"]
     layers = meta["detector"].get("layer_centres_m", {})
     calib = meta["detector"]["subsystem_calibration"]
@@ -519,7 +525,7 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
 
     return (
         f"Both algorithms were run on identical input: events "
-        f"[{window['start_event']}, {window['start_event'] + window['num_events']}) of ColliderML ttbar pu0, "
+        f"[{window['start_event']}, {window['start_event'] + window['num_events']}) of ColliderML {sample}, "
         f"with cells zero-suppressed at {hits['calohit_min_energy']:g} GeV. Target particles satisfy "
         f"pT >= {parts['particle_min_pt']} GeV, |eta| <= {parts['particle_max_abs_eta']}, and at least "
         f"{parts['particle_min_num_calohits']} calorimeter cells counted after zero-suppression. Truth is the "

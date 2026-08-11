@@ -42,7 +42,7 @@
 # never overwrite a pu0 table, and the two sets of numbers cannot be mixed into
 # one figure by forgetting which is which.
 dataset:
-  active: pu0            # pu0 | pu200
+  active: pu200          # pu0 | pu200
 
   pu0:
     # Dumped from the SIMPLIFIED-BASELINE checkpoint: run 48247, 7 epochs, AdamW,
@@ -79,8 +79,21 @@ dataset:
   # one of these is empty, which is a better failure than silently scoring pu0
   # events and labelling them pu200.
   pu200:
-    store: ""
-    tune_store: ""
+    # STAGED, NOT YET PRODUCED. Neither directory exists yet: they are the paths
+    # src/maskformer/ce_ai_1/dump_store_pu200.sh will write, spelled out here so that
+    # producing the stores is the only remaining step and nobody has to re-derive the
+    # naming. The name is built by eval/dump.py as
+    #   <dataset_prefix>_<start>_<start+num>_v<FORMAT_VERSION>
+    # i.e. ttbar_pu200 + the windows below + format 2, under the script's OUT directory.
+    #
+    # `store_path()` raises while these point at nothing, which is the intended failure --
+    # far better than scoring pu0 events under a pu200 label. Until the dump runs, every
+    # command below will stop with a message naming the missing key.
+    #
+    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store_pu200.sh tune
+    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store_pu200.sh eval
+    store: /mnt/ai-datastore/finnbar/eventstore_pu200/ttbar_pu200_7500_8000_v2
+    tune_store: /mnt/ai-datastore/finnbar/eventstore_pu200/ttbar_pu200_7000_7050_v2
     # The store carries its own window and asserts it is disjoint from the
     # checkpoint's training window, so these numbers exist for one purpose: the
     # CLUE tune-vs-eval overlap check in src/config.py. Set them to the windows
@@ -101,12 +114,38 @@ dataset:
       tune_events: 50
 
     overrides:
+      # The barrel cut, and the reason it has to be declared here rather than inherited.
+      #
+      # configs/overlay_pu200_barrel.yaml restricts BOTH cells and particles to |eta| < 0.88, so
+      # every target in the pu200 store satisfies that; the value outside this block is pu0's 4.0.
+      # src/io/event_store.py compares the two and refused to open the store until they agreed --
+      # which is the check working, not an obstacle. It is declared as an override rather than
+      # edited in place so pu0 keeps 4.0, exactly as the header of this file instructs.
+      #
+      # NOTE the CELL cut has no counterpart here: the dump records only calohit_min_energy under
+      # hit_selection, so `calohit_max_abs_eta: 0.88` travels in the config that produced the
+      # store rather than in its metadata, and cannot be contract-checked. The cells themselves
+      # are in the store either way, so this is a provenance gap, not a correctness one.
+      particle_selection:
+        particle_max_abs_eta: 0.88
+
       maskformer:
         # A different sample needs a different checkpoint -- a pu0-trained model
-        # run on pu200 measures domain shift, not the architecture. Leave empty
-        # until one exists; the number that matters is in the store's metadata
-        # either way, and make_figures warns when the two disagree.
-        checkpoint: ""
+        # run on pu200 measures domain shift, not the architecture. The number that
+        # matters is in the store's metadata either way, and make_figures warns when
+        # the two disagree.
+        #
+        # The completed 5-EPOCH barrel run, 30,000 steps, val_loss 70.93 -> 57.25 (the 2-epoch
+        # run it replaces ended at 62.85). Measured on 150 test events, best-overlap matching:
+        #
+        #                 eff@0.5  eff@0.75  pur@0.5     F1   cells/flow
+        #   2 epochs       0.635    0.331     0.317    0.423     19.9
+        #   5 epochs       0.663    0.378     0.432    0.523     17.2
+        #
+        # Purity +36% relative and F1 +24% for nothing but training, with thresholds untouched --
+        # which is the logit RANKING improving, the one thing scripts/sweep_pred_threshold.py
+        # showed no cut point can fix.
+        checkpoint: external/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260809-T132559/ckpts/epoch=004-val_loss=57.24615.ckpt
         # The pu0 working point (0.5 / 0.2) is a MEASUREMENT on pu0 -- the object
         # threshold of 0.2 bought ~25% relative efficiency at flat purity there --
         # and there is no reason it transfers. Re-derive it with
@@ -182,6 +221,29 @@ particle_selection:
   particle_min_pt: 0.5
   particle_max_abs_eta: 4.0
   particle_min_num_calohits: 3
+
+  # WHAT COUNTS AS A TARGET, which the three cuts above do not say. ColliderML's particle table
+  # is the full Geant record, so a showering particle appears alongside every secondary it made
+  # and every secondary those made. Treating each as its own target -- the behaviour up to and
+  # including results/pu0/ and results/pu200/ -- measured, over 2,800 pu0 events:
+  #
+  #   85.7% of targets non-primary, 71.8% of them born inside the calorimeter
+  #   83% of targets sitting in a shower split into several, median sibling separation dR 0.045
+  #   31.7% of calorimeter energy owned by any target at all
+  #   composition 21% protons / 37% e+- / 1% photons
+  #
+  # Fragments at dR 0.02 inside one shower core are not separable by any algorithm, so that
+  # definition capped efficiency and purity for reasons unrelated to the method: oracle_geometric,
+  # given the true particle count and the true shower axes, still only reached 0.61.
+  #
+  # true merges each fragment onto the ancestor that ENTERED the calorimeter. Not onto the
+  # generator root -- a pi0's two photons are two separate showers and the root would fuse them.
+  # 536 -> 186 targets/event, energy coverage 0.317 -> 0.864.
+  #
+  # CHANGING THIS INVALIDATES EVERY STORE DUMPED UNDER THE OTHER SETTING. It is in
+  # event_store.py's CONTRACT_KEYS so that mixing the two fails loudly instead of quietly
+  # scoring one method's clusters against the other's truth.
+  particle_collapse_shower_secondaries: true
 
 # Note on what is NOT here: the original config carried an
 # `event_selection.min_calo_hits: 3000` cut to drop near-empty events. It has
