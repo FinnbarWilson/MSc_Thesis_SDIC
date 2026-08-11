@@ -2,7 +2,9 @@
 
 Everything needed to write Section 4. All numbers read from `results/pu200/*.parquet`,
 `results/pu200/jets.parquet` and `results/pu200/anatomy_particles.parquet` on 2026-08-10, on the
-**500-event evaluation window [7500, 8000)**. Figures live in `figures/thesis/` as `.pdf` and
+**500-event evaluation window [7500, 8000)**. That last file is a rebuildable cache and is
+gitignored rather than tracked (44 MB); `make_thesis_figures.py --rebuild-anatomy` regenerates it
+from the event store in a few minutes. Figures live in `figures/thesis/` as `.pdf` and
 `.png`; all are 5.2 in wide (0.8 textwidth at 12pt A4, 1 in margins).
 
 **pu0 is not yet available.** Its training run is in progress; every pu0 cell below is marked

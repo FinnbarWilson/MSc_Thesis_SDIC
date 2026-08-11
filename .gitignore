@@ -41,3 +41,9 @@ results/*/*.db
 results/*/particles_*.parquet
 results/*/clusters_*.parquet
 results/*/soft_particles_*.parquet
+
+# Rebuildable caches, not results. make_thesis_figures.py builds these from the event store
+# with --rebuild-anatomy / --rebuild-jets; the pass costs minutes, the file costs 44 MB, and a
+# tracked copy would be 86% of the repository for something no figure needs to be handed.
+# The SCORED tables beside them (particles_*.parquet, clusters_*.parquet) are results and stay.
+results/*/anatomy_particles.parquet
