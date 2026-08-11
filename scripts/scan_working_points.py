@@ -115,7 +115,8 @@ def main() -> None:
         p, c = [], []
         for record in records:
             label, n = cluster_event(
-                record, params, subsystems=tuple(cfg["detectors"]), coords=cfg["clue"]["coords"], backend=cfg["clue"]["backend"]
+                record, params, subsystems=tuple(cfg["detectors"]), coords=cfg["clue"]["coords"],
+                backend=cfg["clue"]["backend"], link_radius=cfg["clue"].get("link_radius", 0.0),
             )
             pi, ci, _ = score_event(
                 record, label, n, algo="clue",

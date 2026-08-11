@@ -103,6 +103,7 @@ def main() -> None:
             record, clue_params, subsystems=tuple(cfg["detectors"]),
             coords=cfg["clue"]["coords"], backend=cfg["clue"]["backend"],
             min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
+            link_radius=cfg["clue"].get("link_radius", 0.0),
         )
         c_cluster, c_cell, c_weight = hard_weights(label)
         frames["clue"].append(

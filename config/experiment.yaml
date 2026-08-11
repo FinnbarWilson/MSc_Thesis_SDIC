@@ -385,6 +385,26 @@ clue:
   objective: cluster_f1
   backend: cpu serial      # cpu serial | cpu openmp
   optuna_trials: 80
+
+  # Join clusters ACROSS subsystems whose energy centroids are within this (eta, phi) radius.
+  # 0 disables and reproduces every result dumped before 2026-08-11.
+  #
+  # THIS EXISTS BECAUSE THE TRUTH DEFINITION CHANGED. CLUE runs once per subsystem, so a shower
+  # crossing ECAL into HCAL is split by construction -- src/clue/pipeline.py has always said so.
+  # Under per-Geant-particle truth that cost little: a target was one shower fragment and 24.6%
+  # of them spanned a boundary. Under shower-level truth a target is the whole shower, and the
+  # figure is 42.2% of targets carrying 10.8% of target energy (measured, 50 pu0 events). Without
+  # this stage CLUE could not represent 42% of the target set at all, which would cap its
+  # efficiency for a reason belonging to the harness rather than to the algorithm -- the mirror
+  # image of the unfairness that collapsing the truth removed from the model's side.
+  #
+  # NOT YET TUNED. 0.05 is a placeholder of the right order (an ECAL shower is ~0.02-0.05 wide in
+  # angle), NOT a measurement, and it is the one CLUE parameter the per-subsystem Optuna search
+  # cannot reach -- linking is cross-subsystem by definition, so it needs its own scan over the
+  # tune store after the per-subsystem search converges. Do that before quoting any CLUE number.
+  # Too large merges genuinely separate showers and purity falls; too small and 42% of targets
+  # stay split. The split_rate and merge_rate columns are what to read it off.
+  link_radius: 0.05
   search:
 #
 # The ranges below are the SECOND iteration. The first pass returned optima pressed against
@@ -394,11 +414,23 @@ clue:
 # in the outer 5% of a range, so this is checked rather than eyeballed. Lower density
 # thresholds and looser depth linking were opened up accordingly.
     outlier_distance_factor: [1.0, 3.0]
+    # UPPER BOUNDS RAISED 2026-08-11, and the reason is the truth definition rather than a
+    # failed search. Against per-fragment truth the optimum sat at the FINE edge of these
+    # ranges -- hcb tuned to d_c_2d = 0.00286 against a lower bound of 2.0e-3, i.e. pinned --
+    # because the target was a shower fragment and the only way to chase one was to cut as
+    # finely as the range allowed. Shower-level truth asks for objects ~4x larger (median 57
+    # cells against 16), so the optimum moves the other way and the old upper bounds are the
+    # ones now at risk of binding. Doubling them costs nothing: the search is logarithmic and
+    # 80 trials, so a wider range is a slightly coarser grid, not a worse answer.
+    #
+    # tune_clue.py flags any optimum landing in the outer 5% of its range. READ THOSE WARNINGS
+    # -- the pu0 ranges needed widening once already, and an optimum on a bound is not an
+    # optimum.
     etaphi:
-      ecb: {d_c_2d: [1.0e-3, 0.10], rho_c_2d: [1.0e-5, 1.0e-2], d_c_3d: [3.0e-3, 0.30], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
-      ece: {d_c_2d: [1.0e-3, 0.10], rho_c_2d: [1.0e-5, 1.0e-2], d_c_3d: [3.0e-3, 0.30], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
-      hcb: {d_c_2d: [2.0e-3, 0.20], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.40], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
-      hce: {d_c_2d: [2.0e-3, 0.20], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.40], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
+      ecb: {d_c_2d: [1.0e-3, 0.20], rho_c_2d: [1.0e-5, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
+      ece: {d_c_2d: [1.0e-3, 0.20], rho_c_2d: [1.0e-5, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
+      hcb: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
+      hce: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
 
 # --- MaskFormer -------------------------------------------------------------
 # The architecture is not restated here: it lives in the checkpoint, and a copy

@@ -15,6 +15,18 @@ Each subsystem is tuned independently. Their cell energies and geometries differ
 of magnitude -- ECAL layers sit 5.05 mm apart and HCAL layers 51 mm -- so a single density
 radius cannot mean the same thing in both.
 
+WHAT SHOWER-LEVEL TRUTH DID TO THAT DECOMPOSITION, and why it still holds. A collapsed target
+is a whole shower, and 42.2% of them span a subsystem boundary, so a per-subsystem trial now
+routinely sees only PART of a target -- `_RestrictedTruth` masks the rest away and the
+`n_hits > 0` filter below drops targets absent from this subsystem entirely. That is the right
+sub-problem rather than a defect: it asks "given only these cells, how well can CLUE recover
+the part of each shower that lives here?", which is exactly what a per-subsystem density radius
+should be chosen on. Stitching the parts back together is a different question with its own
+single parameter, `clue.link_radius`, and it CANNOT be tuned in this loop because it is
+cross-subsystem by definition. **It needs its own scan over the tuning window after this one
+converges**; until that exists, the configured value is a placeholder and no CLUE number is
+final. See :func:`src.clue.pipeline.link_across_subsystems`.
+
 The jet objective that used to live here is gone with the rest of the jet work; it will come
 back when the `particle_min_pt` question is settled.
 """

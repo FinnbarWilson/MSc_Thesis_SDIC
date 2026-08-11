@@ -210,6 +210,88 @@ def cluster_subsystem(
     return cluster_ids, selected
 
 
+def link_across_subsystems(record, label: np.ndarray, radius: float) -> np.ndarray:
+    """Union clusters in DIFFERENT subsystems whose energy centroids are within `radius`.
+
+    WHY THIS EXISTS. `cluster_event` runs CLUE once per subsystem, so a shower crossing the
+    ECAL/HCAL boundary is split by construction. Under the per-Geant-particle truth that cost
+    little, because a target was a single shower fragment and 24.6% of them spanned a boundary.
+    Under shower-level truth a target is the whole shower, and the figure is **42.2%** of
+    targets and 10.8% of target energy (measured on 50 pu0 events). Leaving it would cap CLUE's
+    efficiency for reasons belonging to the harness rather than the algorithm -- the same
+    unfairness that collapsing the truth removed from the model's side.
+
+    This is the pipeline's own 2D->3D trick applied one level up: reduce each cluster to a
+    centroid, then link centroids. It joins only clusters from different subsystems, because
+    clusters within one have already been offered to CLUE's own linking pass and rejecting
+    that decision here would be second-guessing the algorithm rather than completing it.
+
+    Centroids are energy-weighted in (eta, phi) with phi wrapped, since the boundary being
+    crossed is radial (ECAL to HCAL) or in eta (barrel to endcap), and a shower crossing it
+    keeps its angular position. Linking is transitive via union-find, so an ecb-hcb-hce chain
+    becomes one cluster.
+
+    Args:
+        record: an :class:`~src.io.event_store.EventRecord`.
+        label: per cell, cluster index, -1 for unclustered.
+        radius: maximum centroid separation in (eta, phi). 0 disables and returns `label`.
+
+    Returns:
+        A relabelled copy; ids are NOT compacted, which `cluster_event` does afterwards.
+    """
+    if radius <= 0 or not (label >= 0).any():
+        return label
+
+    n = int(label.max()) + 1
+    energy = record.energy_calib
+    eta, phi = record.eta(), record.phi()
+
+    clustered = label >= 0
+    idx = label[clustered]
+    weight = np.bincount(idx, weights=energy[clustered], minlength=n)
+    if not (weight > 0).any():
+        return label
+
+    safe = np.where(weight > 0, weight, 1.0)
+    cen_eta = np.bincount(idx, weights=energy[clustered] * eta[clustered], minlength=n) / safe
+    # phi is periodic, so average the unit vector rather than the angle: a cluster straddling
+    # +-pi would otherwise land its centroid at 0, on the opposite side of the detector.
+    sin_p = np.bincount(idx, weights=energy[clustered] * np.sin(phi[clustered]), minlength=n) / safe
+    cos_p = np.bincount(idx, weights=energy[clustered] * np.cos(phi[clustered]), minlength=n) / safe
+    cen_phi = np.arctan2(sin_p, cos_p)
+
+    # The subsystem a cluster belongs to. cluster_event builds each cluster from one subsystem,
+    # so the first cell's code identifies it.
+    sub = np.full(n, -1, dtype=np.int64)
+    sub[idx] = record.subsystem[clustered]
+
+    live = np.flatnonzero(weight > 0)
+    parent = np.arange(n)
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    # n is a few hundred per event, so the pairwise pass is cheaper than building a tree.
+    d_eta = cen_eta[live][:, None] - cen_eta[live][None, :]
+    d_phi = np.mod(cen_phi[live][:, None] - cen_phi[live][None, :] + np.pi, TWO_PI) - np.pi
+    close = np.hypot(d_eta, d_phi) <= radius
+    cross = sub[live][:, None] != sub[live][None, :]
+    rows, cols = np.nonzero(np.triu(close & cross, k=1))
+
+    for a, b in zip(live[rows], live[cols], strict=True):
+        ra, rb = find(int(a)), find(int(b))
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    out = label.copy()
+    roots = np.array([find(i) for i in range(n)])
+    out[clustered] = roots[idx]
+    return out
+
+
 def cluster_event(
     record,
     params_by_subsystem: Mapping[str, Mapping[str, float]],
@@ -217,14 +299,16 @@ def cluster_event(
     coords: str = "etaphi",
     backend: str = "cpu serial",
     min_cluster_hits: int = 1,
+    link_radius: float = 0.0,
 ) -> tuple[np.ndarray, int]:
     """Cluster every subsystem and merge the results into one labelling.
 
-    Cluster ids are offset per subsystem so they stay unique across the event. This is
-    bookkeeping only: it does not link a shower across a subsystem boundary, so a hadron
-    showering through ECAL into HCAL yields at least two clusters by construction. That is a
-    real property of the algorithm as configured and the split-rate metric will report it as
-    such; it is stated rather than hidden.
+    Cluster ids are offset per subsystem so they stay unique across the event. On its own that
+    is bookkeeping and does not link a shower across a subsystem boundary, so a hadron showering
+    through ECAL into HCAL yields at least two clusters. `link_radius` is what closes that gap;
+    at the default of 0 it is disabled and the behaviour is exactly what produced the pre-2026-08
+    results. See :func:`link_across_subsystems` for why it is no longer optional under
+    shower-level truth.
 
     Args:
         record: an :class:`~src.io.event_store.EventRecord`.
@@ -233,6 +317,7 @@ def cluster_event(
         coords: ``"etaphi"`` or ``"xy"``.
         backend: CLUEstering compute backend.
         min_cluster_hits: drop clusters smaller than this before relabelling.
+        link_radius: (eta, phi) radius for joining clusters ACROSS subsystems. 0 disables.
 
     Returns:
         ``(labels, n_clusters)`` with labels compacted to ``0..n_clusters-1`` and -1 for
@@ -249,6 +334,9 @@ def cluster_event(
         if clustered.any():
             merged[clustered] = ids[clustered] + offset
             offset = int(merged.max()) + 1
+
+    # Before min_cluster_hits, so the size cut sees the linked cluster rather than the pieces.
+    merged = link_across_subsystems(record, merged, link_radius)
 
     if min_cluster_hits > 1 and (merged >= 0).any():
         counts = np.bincount(merged[merged >= 0])

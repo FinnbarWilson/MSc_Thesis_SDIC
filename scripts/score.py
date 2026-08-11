@@ -102,6 +102,7 @@ def clue_labels(record, cfg, params):
         coords=cfg["clue"]["coords"],
         backend=cfg["clue"]["backend"],
         min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
+        link_radius=cfg["clue"].get("link_radius", 0.0),
     )
 
 

@@ -76,7 +76,8 @@ def _labels(record, method, cfg, clue_params):
     mf = cfg["maskformer"]
     if method == "clue":
         return cluster_event(record, clue_params, coords=cfg["clue"]["coords"],
-                             backend=cfg["clue"]["backend"], min_cluster_hits=cfg["metrics"]["min_cluster_hits"])
+                             backend=cfg["clue"]["backend"], min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
+                             link_radius=cfg["clue"].get("link_radius", 0.0))
     label, n = record.maskformer_labels(mask_threshold=mf["mask_threshold"], object_threshold=mf["object_threshold"],
                                         min_cluster_hits=cfg["metrics"]["min_cluster_hits"])
     if method == "maskformer_chained":
