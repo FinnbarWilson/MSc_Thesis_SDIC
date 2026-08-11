@@ -28,15 +28,16 @@ src/io/event_store.py    reads the event store; validates it against the config
 src/clue/                the CLUE baseline and its hyperparameter search
 src/evaluation/          matching, metrics and differential binning - shared by both methods
 src/plotting/            figure generation
-src/maskformer/          the learned model: training config, the trained weights, and the dump
-                         that writes an event store. Needs hepattn and a GPU; see below
+src/maskformer/          the learned model: the experiment configs and the dump that writes an
+                         event store. Needs hepattn and a GPU; see below. No checkpoint is
+                         tracked here - see "Can this be reproduced?"
 scripts/                 command line entry points
 setup/                   fresh clone -> reproduced result: both environments, and the dataset
                          download. Start here on a new machine
 tests/                   scorer identity tests and the CLUE periodic-metric regression
 results/<dataset>/       pooled parquet tables, one directory per pileup condition
 figures/<dataset>/       generated figures, likewise
-attic/                   superseded code, kept for its decisions and imported by nothing
+docs/                    the status notes and thesis chapter plans
 external/                gitignored: everything setup/ builds (hepattn checkout, both
                          environments). Delete it to return the clone to its committed state
 ```
@@ -69,6 +70,31 @@ would draw one panel from two experiments with nothing looking wrong.
 `src/evaluation/` never learns which method produced a clustering. It takes a label per cell
 plus the truth partition and returns numbers, so both pipelines are scored by identical code
 rather than by two implementations that are meant to agree.
+
+## Can this be reproduced?
+
+The analysis half, yes, and that is the half most of this repository is. Given an event store,
+`python -m scripts.score` then `python -m scripts.make_thesis_figures` regenerates every table
+and every figure, `config/experiment.yaml` plus the store contract make the inputs verifiable
+rather than assumed, and `setup/` rebuilds both environments and fetches the dataset from a
+clean clone.
+
+Four things stand between a clean clone and the numbers, and it is more honest to name them
+than to let someone discover them:
+
+1. **No trained checkpoint is tracked here.** One was, from an objective the thesis no longer
+   uses; it was 90% of the repository's bytes and was deleted on 2026-08-11. Every event store
+   needs a checkpoint, so reproducing the model column means a training run — currently ~21 h on
+   an A100 for pu0. Checkpoints live under `external/hepattn/.../logs/<run>/ckpts/`, which is
+   gitignored and machine-local.
+2. **Event stores live outside the repository**, at absolute paths recorded in
+   `config/experiment.yaml` under `dataset.<name>.store`. On another machine those paths do not
+   exist; `src.config.store_path()` raises naming the key, which is the intended failure rather
+   than a silent wrong answer.
+3. **The dataset is ~300 GB** and is not redistributed here. `setup/download_data.py` fetches it.
+4. **`results/pu0/` and `figures/pu0/` are currently stale** — scored against a truth definition
+   replaced on 2026-08-11. Both directories carry a `STALE.md` saying so. They are kept only
+   until the run under the new definition lands.
 
 ## Installation
 
@@ -486,14 +512,6 @@ MaskFormer jets would be missing that energy by construction while CLUE's would 
 resulting plot would measure the target definition rather than either algorithm. The
 decisions already taken are recorded under `jets:` in the config so they are not relitigated.
 
-The implementation is in `attic/jets.py`, where it does not run: it was written against the
-raw parquet loader, which the event store replaced. Reviving jets means rewriting it against
-`src/io/event_store.py`, not repairing it in place.
-
-## `attic/`
-
-Four modules from the design before the event store, when each method opened the raw
-ColliderML parquet and applied the shared cuts itself. None of them imports — they call
-`src.config.dataset_paths` and `src.config.split_bounds`, which no longer exist — and nothing
-live references them. They are kept because the decisions inside them are still open even
-though the code is not; `attic/README.md` says which is which.
+The live implementation is `src/evaluation/jets.py`. An earlier one, written against the raw
+parquet loader that the event store replaced, was deleted along with the rest of `attic/` in
+the 2026-08-11 cleanup; `git log -- attic/` recovers it and the decisions recorded with it.

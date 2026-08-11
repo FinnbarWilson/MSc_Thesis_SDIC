@@ -4,7 +4,7 @@
 #   nohup ./train_pu200.sh > ~/train_pu200.log 2>&1 &
 #
 # There is no walltime cap here and no queue, so unlike on DIAS the run does not have to be split
-# into resumable jobs -- overlay_pu200.yaml sizes a single ~21 h schedule that completes its
+# into resumable jobs -- overlay_pu200_barrel.yaml sizes a single ~21 h schedule that completes its
 # OneCycle decay in one go. Run it under nohup (or tmux) so it survives losing the ssh session.
 #
 # Overrides, same interface as the old slurm script:
@@ -52,7 +52,7 @@ n = int(sys.argv[1])
 if n > 6750:
     sys.exit(f"ABORT: num_train={n} runs past the test window into the CLUE store windows "
              f"[7000,7050) and [7500,8000). Keep num_train <= 6000, or move the store windows "
-             f"in configs/overlay_pu200.yaml and config/experiment.yaml together.")
+             f"in configs/overlay_pu200_barrel.yaml and config/experiment.yaml together.")
 print(f"window check OK: train [0,{n}) is disjoint from the store windows")
 PY
 

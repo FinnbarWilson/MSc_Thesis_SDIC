@@ -66,7 +66,7 @@ trainer:
   #
   # RESIZE THIS AND THE WALLTIME TOGETHER. OneCycleLR is sized from total steps, so a schedule that
   # does not complete leaves its final checkpoint at a high learning rate -- the waste described in
-  # overlay_long_schedule.yaml and ../ce_ai_1/PU200_STATUS.md §6. dias/train_calo_clustering.sh
+  # overlay_long_schedule.yaml and docs/PU200_STATUS.md §6. dias/train_calo_clustering.sh
   # asks for 26 h against these 20.4, and stops cleanly at 25 h if the throughput estimate is
   # wrong. If the epoch count changes, re-run the benchmark and move both numbers.
   max_epochs: 7

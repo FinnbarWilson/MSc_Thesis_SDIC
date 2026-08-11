@@ -4,7 +4,7 @@ THE QUESTION
 ------------
 The mask head decides membership with an independent sigmoid per (query, cell), so it can express
 "this cell resembles that query" and cannot express "this cell is connected to a cell that does".
-That is the structural gap behind every measurement in `src/maskformer/HIGH_ENERGY_STATUS.md`: a
+That is the structural gap behind every measurement in `docs/HIGH_ENERGY_STATUS.md`: a
 fixed ~6-cell aperture whatever the shower's size, and 48.6% of assigned cells ending up in the
 wrong cluster after growth, 82.1% of them cells with a single unambiguous owner.
 

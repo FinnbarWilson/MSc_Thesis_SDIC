@@ -37,6 +37,11 @@ dependencies:
   # style.py, and a missing install degrades to matplotlib's defaults rather than failing.
   - scienceplots=2.2.2
 
+  # Dataset download. setup/download_data.py imports huggingface_hub and nothing else, and its
+  # docstring already claimed this environment provides it -- it did not, and a fresh clone hit
+  # ModuleNotFoundError on the first command the README tells you to run. Added 2026-08-11.
+  - huggingface_hub
+
   # Testing
   - pytest
 

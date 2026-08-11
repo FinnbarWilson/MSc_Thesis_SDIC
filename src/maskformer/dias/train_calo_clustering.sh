@@ -96,7 +96,7 @@
 #
 # OneCycleLR is sized from TOTAL optimiser steps, so a run that hits the wall mid-schedule never
 # reaches its decay phase and its final checkpoint is taken at a high learning rate -- the waste
-# calo_clustering.yaml and ../ce_ai_1/PU200_STATUS.md §6 both describe. MAX_TIME below stops
+# calo_clustering.yaml and docs/PU200_STATUS.md §6 both describe. MAX_TIME below stops
 # Lightning cleanly an hour before the wall so the run ends with a written checkpoint rather than a
 # SIGKILL. IT SHOULD NOT TRIGGER: if it does, the sizing is wrong and the checkpoint it leaves is
 # mid-schedule.

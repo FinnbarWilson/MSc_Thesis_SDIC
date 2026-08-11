@@ -21,7 +21,7 @@
 # RUN THIS BEFORE train_calo_clustering.sh, and re-run it whenever the config's per-step cost
 # changes. OneCycleLR is sized from TOTAL optimiser steps, so a run that overruns its walltime
 # never reaches its decay phase and its final checkpoint is taken at a high learning rate -- the
-# waste ../ce_ai_1/PU200_STATUS.md §6 describes. Sizing the wall from a guess is how it happens.
+# waste docs/PU200_STATUS.md §6 describes. Sizing the wall from a guess is how it happens.
 #
 # ---------------------------------------------------------------------------------------------
 # WHY THIS RUNS AT THE FULL num_train RATHER THAN ON A SMALL SUBSET

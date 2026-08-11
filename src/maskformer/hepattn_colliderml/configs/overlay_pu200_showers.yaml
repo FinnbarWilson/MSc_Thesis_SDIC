@@ -92,8 +92,8 @@ model:
     init_args:
       decoder:
         # Restated in full rather than overriding num_queries alone, for the reason
-        # overlay_pu200.yaml gives: YAML anchors do not cross files, and a partial mapping risks
-        # jsonargparse replacing the block instead of merging into it, silently resetting
+        # the superseded non-barrel pu200 overlay gave: YAML anchors do not cross files, and a
+        # partial mapping risks jsonargparse replacing the block instead of merging in, resetting
         # num_decoder_layers and decoder_layer_config to their defaults. KEEP IN SYNC WITH
         # overlay_pu200_barrel.yaml; the only intended difference is num_queries.
         num_decoder_layers: 4

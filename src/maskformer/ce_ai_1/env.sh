@@ -28,7 +28,7 @@ PYTHON="$VENV_TRAIN/bin/python"
 #
 # This is not tidiness, it is a correctness trap that has already bitten once. main.py runs from
 # the CHECKOUT, which holds copies made at install time -- so editing
-# src/maskformer/hepattn_colliderml/configs/overlay_pu200.yaml in the repository and launching a
+# src/maskformer/hepattn_colliderml/configs/overlay_pu200_barrel.yaml in the repository and launching a
 # run silently uses the stale copy. The symptom is a config change that appears to do nothing
 # (observed: max_epochs edited to 9, --print_config still reporting 3). The repository is the
 # source of record, so it wins here, every time, automatically.

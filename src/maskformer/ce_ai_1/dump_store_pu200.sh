@@ -2,10 +2,10 @@
 # Dump pu200 event stores. Replaces slurm/calo_dump_eventstore.sh on ce-ai-1.
 #
 # This is the step that makes the comparison controlled: CLUE does not read ColliderML, it reads
-# the store written here from the MODEL's own dataloader. Whatever cuts overlay_pu200.yaml applies
+# the store written here from the MODEL's own dataloader. Whatever cuts overlay_pu200_barrel.yaml applies
 # (calohit_min_energy 1e-3, particle_min_pt 2.0) therefore apply to both methods by construction.
 #
-# Dump BOTH stores after training, from the windows overlay_pu200.yaml leaves free:
+# Dump BOTH stores after training, from the windows overlay_pu200_barrel.yaml leaves free:
 #
 #   CKPT=<your pu200 ckpt> ./dump_store_pu200.sh tune    # events [7000, 7050),  50 events
 #   CKPT=<your pu200 ckpt> ./dump_store_pu200.sh eval    # events [7500, 8000), 500 events

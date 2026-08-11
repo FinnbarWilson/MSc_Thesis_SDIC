@@ -1,7 +1,7 @@
 # `src/maskformer/` — the learned model: training it, and producing the event store
 
 This directory holds the MaskFormer half of the comparison: the dataset, the model
-configuration, the trained weights, and the evaluation dump that turns them into an event
+configuration, and the evaluation dump that turns a trained checkpoint into an event
 store. Everything else under `src/` is deliberately numpy-only and runs on a laptop; this
 part is not.
 
@@ -134,7 +134,7 @@ dias/                        Slurm launchers for DIAS, for the config as this re
                              what is trained, ask for a walltime the schedule fits, and fix the
                              ECC preflight's device numbering. Mine, so likewise outside the
                              mirror. Start at dias/README.md.
-checkpoint/                  The trained weights the reported results come from, plus provenance.
+                             (checkpoint/ was deleted 2026-08-11; see "The checkpoint" below)
 hepattn-changes.patch        My modifications to the upstream library.
 verify_sync.sh               Checks hepattn_colliderml/ against a hepattn checkout.
 ```
@@ -145,38 +145,30 @@ into a spool directory, so deriving the repository root from `$BASH_SOURCE` reso
 Moving this directory does not affect them, and should not: they address the checkout, not
 the mirror.
 
-## The checkpoint
+## The checkpoint — and why there is no longer one here
 
-`checkpoint/epoch=003-val_loss=18.06191-weights.ckpt` is the model every MaskFormer number in
-the thesis comes from. 11.6 M parameters, trained on events `[0, 20000)`, evaluated on
-`[20250, 20750)` — disjoint, and `src/io/event_store.py` asserts the disjointness rather than
-trusting it.
+**No checkpoint is tracked in this repository.** One was: a 41.7 MB
+`epoch=003-val_loss=18.06191-weights.ckpt`, stripped of optimiser state, alongside its resolved
+`config.yaml` and a `metadata.yaml` of git commit, job id, GPU and Comet URL. It was deleted on
+2026-08-11 for two reasons that compounded:
 
-It is a **pileup-0** checkpoint, which matters for the pu200 work: running it on pu200 events
-measures how far the model transfers across pileup conditions, and that is a different
-question from how the architecture compares to CLUE. `config/experiment.yaml` keeps the
-checkpoint under `dataset.pu200.overrides.maskformer` for exactly that reason — so a pu200
-run has to name its own rather than inheriting this one by default.
+- **it was trained on an objective the thesis no longer uses** — dice 5 + focal 20 with an
+  incidence head at `kl_div` weight 100 — so it could not produce any reported number, and an
+  assessor finding it beside the current configs would reasonably assume it could;
+- **it was 90% of the repository's tracked bytes**, which is a poor trade for a file that
+  reproduces nothing.
 
-The optimiser state has been stripped (83.3 MB to 41.7 MB). Those are Lion's momentum buffers
-and Lightning's loop bookkeeping; they are needed only to *resume* training, never to load the
-model. The architecture survives, because Lightning stores it in `hyper_parameters`, so:
+`git log -- src/maskformer/checkpoint/` recovers all three files with their provenance intact.
 
-```python
-from hepattn.experiments.colliderml.model import ColliderMLModel
-model = ColliderMLModel.load_from_checkpoint("checkpoint/epoch=003-...-weights.ckpt",
-                                             map_location="cpu")
-```
+**Where checkpoints actually live.** Training writes them to
+`external/hepattn/src/hepattn/experiments/colliderml/logs/<run>/ckpts/`, which is gitignored and
+machine-local. Each run also writes its own fully-resolved `config.yaml` beside them — that file,
+not `configs/calo_clustering.yaml`, is the authoritative record of what was trained, because the
+configs move on. Comet holds the training curves; the run URL is printed at launch and appears in
+the log.
 
-reconstructs the full network from this file alone. Verified to give weights byte-identical to
-the unstripped original. **It cannot be used to resume training** — retrain from scratch, or
-take the original from `logs/` on the cluster.
-
-`checkpoint/config.yaml` is the run's own fully-resolved configuration, written by Lightning at
-launch, and is the authoritative record of what was trained — prefer it over
-`hepattn_colliderml/configs/calo_clustering.yaml`, which has moved on since.
-`checkpoint/metadata.yaml` carries the provenance: git commit, slurm job id, GPU, and the Comet
-run URL with the training curves.
+A checkpoint is needed only to dump an event store. Nothing in `scripts/` touches one, so every
+table and figure regenerates from the stores alone.
 
 ## Running it
 
@@ -224,7 +216,7 @@ is taken at a high learning rate).
 **Produce an event store.** ~12 minutes for 500 events at pu0, and about 320 kB per event:
 
 ```bash
-CKPT=src/maskformer/checkpoint/epoch=003-val_loss=18.06191-weights.ckpt \
+CKPT=<a checkpoint from a training run, under external/hepattn/.../logs/*/ckpts/> \
 START=20250 NUM=500 OUT=~/eventstore sbatch \
   src/maskformer/hepattn_colliderml/slurm/calo_dump_eventstore.sh
 ```

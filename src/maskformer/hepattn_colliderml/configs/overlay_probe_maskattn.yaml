@@ -49,7 +49,7 @@ model:
       # Restated in full rather than overriding the one key. YAML anchors do not cross files, and a
       # partial mapping risks jsonargparse replacing the block rather than merging into it, which
       # would silently drop num_decoder_layers and decoder_layer_config back to their defaults --
-      # the same trap overlay_pu200.yaml documents. KEEP IN SYNC WITH calo_clustering.yaml; the
+      # the same trap the superseded non-barrel pu200 overlay documented (deleted; see git history). KEEP IN SYNC WITH calo_clustering.yaml; the
       # only intended difference is mask_attention.
       decoder:
         num_decoder_layers: 4

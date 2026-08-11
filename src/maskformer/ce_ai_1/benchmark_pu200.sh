@@ -10,7 +10,7 @@
 #   1. Does it fit? The overlay's cuts put the mask-logit footprint at 2.66x pu0, and pu0 OOMed at
 #      4x -- so it should, but "should" is not "does", and finding out 30 seconds in beats finding
 #      out at hour six. Peak GPU memory is reported below.
-#   2. How fast is it? overlay_pu200.yaml sizes max_epochs from an ESTIMATE of 0.25 events/s,
+#   2. How fast is it? the pu200 overlay sizes max_epochs from an ESTIMATE of 0.25 events/s,
 #      extrapolated from pu0's measured 1.13. OneCycleLR is sized from total steps, so a wrong
 #      estimate does not just mean a run of the wrong length -- it means a run whose final
 #      checkpoint sits at a high learning rate, which is how the hit-filter run was wasted.
@@ -22,7 +22,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 EVENTS="${EVENTS:-200}"
 TARGET_HOURS="${TARGET_HOURS:-22}"
-NUM_TRAIN="${NUM_TRAIN:-6000}"   # must match overlay_pu200.yaml for the epoch arithmetic below
+NUM_TRAIN="${NUM_TRAIN:-6000}"   # must match overlay_pu200_barrel.yaml for the epoch arithmetic below
 
 cd "$EXP_DIR"
 PEAK_FILE=$(mktemp)
@@ -57,7 +57,7 @@ echo
 echo "=================== result ==================="
 if [ "$RC" -ne 0 ]; then
     echo "RUN FAILED (exit $RC)."
-    echo "If this was a CUDA OOM, apply the ladder in the header of configs/overlay_pu200.yaml:"
+    echo "If this was a CUDA OOM, apply the ladder in the header of configs/overlay_pu200_barrel.yaml:"
     echo "  1. calohit_min_energy 1e-3 -> 2e-3   (117k -> 43k hits/event)"
     echo "  2. num_queries + event_max_num_particles 500 -> 400"
     exit "$RC"
@@ -102,6 +102,6 @@ epoch_s = num_train / rate + val_s
 print(f"epoch estimate : {epoch_s/3600:.2f} h at num_train={num_train} (incl. ~{val_s/60:.0f} min validation)")
 fit = max(int(target_h * 3600 // epoch_s), 1)
 print(f"\n--> for a ~{target_h:.0f} h run set  trainer.max_epochs: {fit}   ({fit*epoch_s/3600:.1f} h)")
-print("    Set it in configs/overlay_pu200.yaml. Do NOT let a longer schedule be truncated:")
+print("    Set it in configs/overlay_pu200_barrel.yaml. Do NOT let a longer schedule be truncated:")
 print("    OneCycleLR is sized from total steps and a truncated run ends at a high LR.")
 PY

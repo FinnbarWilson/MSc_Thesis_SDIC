@@ -13,7 +13,7 @@ matched cluster holds ~6 cells whatever the particle's true size, spanning ~0.06
 of depth against showers that reach 0.23 and 0.42 m; and 35% of a high-energy particle's energy sits
 in cells that no query gives even 2% probability, so no working point recovers it (checked to
 mask 0.02 / object 0.001). Five training-side interventions failed to move any of this --
-`src/maskformer/HIGH_ENERGY_STATUS.md` has them.
+`docs/HIGH_ENERGY_STATUS.md` has them.
 
 So this module does not try to fix the model. It takes the model's clusters as SEEDS, which is what
 the mask head is good at, and adds the one thing it structurally cannot do.

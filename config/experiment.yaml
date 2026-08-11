@@ -101,7 +101,7 @@ dataset:
     #
     # These are now DECIDED, and they are the windows
     # src/maskformer/ce_ai_1/dump_store_pu200.sh dumps. They sit in the gap that
-    # src/maskformer/hepattn_colliderml/configs/overlay_pu200.yaml leaves free:
+    # src/maskformer/hepattn_colliderml/configs/overlay_pu200_barrel.yaml leaves free:
     #   train [0, 6000)  val [6000, 6250)  test [6250, 6750)
     #   tune  [7000, 7050)      eval [7500, 8000)      spare [8000, 10000)
     # Only 10,000 events were downloaded (shards 0-99 of 1000), so these cannot

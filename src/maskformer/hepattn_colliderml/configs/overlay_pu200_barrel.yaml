@@ -2,7 +2,7 @@
 #
 #   main.py fit --config configs/calo_clustering.yaml --config configs/overlay_pu200_barrel.yaml
 #
-# Rationale and measurements: ../../ce_ai_1/PU200_STATUS.md
+# Rationale and measurements: docs/PU200_STATUS.md
 #
 # INHERITED FROM calo_clustering.yaml, NOT RESTATED HERE. This overlay does not touch `tasks`,
 # `optimizer` or `accumulate_grad_batches`, so it picks up the simplified baseline that file now
@@ -65,7 +65,7 @@ data:
   test_start_event: 6250
 
 trainer:
-  # 3, was 7. SEVEN WAS AN UNSIZED PLACEHOLDER inherited from overlay_pu200.yaml, whose schedule was
+  # 3, was 7. SEVEN WAS AN UNSIZED PLACEHOLDER inherited from the superseded non-barrel overlay, whose schedule was
   # measured for a DIFFERENT configuration (500 queries at calohit_min_energy 1e-3). PU200_STATUS.md
   # §8 flags it as "still a placeholder"; this is that number being set.
   #

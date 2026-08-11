@@ -9,6 +9,6 @@ testpaths = ["tests"]
 # a bare "23 passed" would otherwise read as full coverage when half the tests never ran.
 addopts = "-ra"
 # src/maskformer/ mirrors a hepattn experiment directory: its files import torch, lightning and
-# hepattn, none of which are installed in the analysis environment. attic/ does not import at
-# all, by construction. Neither holds tests, and neither should be walked looking for them.
-norecursedirs = ["src/maskformer", "attic", ".git", "results", "figures"]
+# hepattn, none of which are installed in the analysis environment. It holds no tests and should
+# not be walked looking for them.
+norecursedirs = ["src/maskformer", ".git", "results", "figures"]
