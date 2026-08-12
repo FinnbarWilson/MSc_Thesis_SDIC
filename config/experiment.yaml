@@ -222,7 +222,9 @@ hit_selection:
 particle_selection:
   particle_min_pt: 0.5
   particle_max_abs_eta: 4.0
-  particle_min_num_calohits: 3
+  # 10, was 3, raised 2026-08-12 together with the training configs. A contract key: the store
+  # carries it and event_store.py refuses to open a store whose value disagrees with this one.
+  particle_min_num_calohits: 10
 
   # WHAT COUNTS AS A TARGET, which the three cuts above do not say. ColliderML's particle table
   # is the full Geant record, so a showering particle appears alongside every secondary it made

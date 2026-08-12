@@ -54,9 +54,17 @@ data:
   particle_include_charged: true
   particle_include_neutral: true
 
-  # Particles depositing 1-2 calo cells are not reconstructable but still sat in the efficiency
-  # denominator. Drops ~15% of targets, keeps 97.7% of the calorimeter energy.
-  particle_min_num_calohits: 3
+  # 10, was 3. Particles depositing only a handful of cells are not reconstructable but still sat
+  # in the efficiency denominator. Measured at 60 events under shower-level truth, raising the
+  # floor from 3 to 10 drops 7% of targets (183.3 -> 170.3 per event) and costs almost nothing in
+  # coverage: the fraction of cells owned by some target goes 0.819 -> 0.816, because the targets
+  # it removes are by construction the ones holding the fewest cells. Median cells per target
+  # rises 58 -> 64.
+  #
+  # THIS IS PART OF THE TRUTH DEFINITION, not a display cut. It is in event_store.py's
+  # CONTRACT_KEYS and must match `particle_selection.particle_min_num_calohits` in
+  # config/experiment.yaml, or the store will refuse to open.
+  particle_min_num_calohits: 10
 
   # THE TRUTH DEFINITION. Merges Geant secondaries produced inside the calorimeter back onto the
   # particle that entered it, so one shower is one target. Measured over 2,800 pu0 events, the
