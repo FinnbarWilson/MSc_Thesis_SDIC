@@ -34,8 +34,8 @@ fi
 # ---------------------------------------------------------------- 1. stores (GPU)
 if [ -n "${CKPT:-}" ]; then
     echo "=== [1/5] dumping event stores from $CKPT"
-    CKPT="$CKPT" ./src/maskformer/ce_ai_1/dump_store_pu200.sh tune
-    CKPT="$CKPT" ./src/maskformer/ce_ai_1/dump_store_pu200.sh eval
+    CKPT="$CKPT" ./src/maskformer/ce_ai_1/dump_store.sh pu200 tune
+    CKPT="$CKPT" ./src/maskformer/ce_ai_1/dump_store.sh pu200 eval
 else
     echo "=== [1/5] CKPT unset -- skipping the dump and assuming the stores already exist"
 fi

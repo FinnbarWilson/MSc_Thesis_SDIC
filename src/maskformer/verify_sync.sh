@@ -48,15 +48,11 @@ echo "Comparing $HERE against $SRC"
 for f in data.py model.py main.py; do
   check "$f" "$SRC/$f"
 done
-for f in calo_clustering.yaml overlay_metric_aligned.yaml overlay_long_schedule.yaml; do
+for f in pu0.yaml pu200.yaml; do
   check "configs/$f" "$SRC/configs/$f"
 done
 for f in __init__.py dump.py format.py geometry.py; do
   check "eval/$f" "$SRC/eval/$f"
-done
-check "scripts/sweep_pred_threshold.py" "$SRC/scripts/sweep_pred_threshold.py"
-for f in calo_clustering.sh calo_dump_eventstore.sh; do
-  check "slurm/$f" "$SRC/slurm/$f"
 done
 
 # The patch is regenerated rather than diffed: it is a view of the upstream working tree, not a

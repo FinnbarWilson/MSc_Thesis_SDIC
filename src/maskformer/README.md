@@ -80,7 +80,7 @@ from what was already there.
   in under a new name cannot. Under a uniform weight it reduces exactly to the original, which
   the tests assert.
 - `models/task.py` — adds `constituent_weight_field` to `ObjectHitMaskTask`, so the mask loss
-  can be weighted per cell. See `hepattn_colliderml/configs/overlay_metric_aligned.yaml` for why.
+  can be weighted per cell. It is not used by either current config; `git log` has the overlay that did.
 - `callbacks/prediction_writer.py` — an `output_name` argument. The writer named its output
   after the data directory, and all three splits live in one directory here, so every split
   overwrote the same file.
@@ -100,50 +100,41 @@ then copy the contents of `hepattn_colliderml/` over `src/hepattn/experiments/co
 hepattn_colliderml/          verbatim copy of hepattn/src/hepattn/experiments/colliderml/
   data.py                    ColliderMLDataset / ColliderMLDataModule: reads the raw parquet
                              shards, applies the cell and particle selections, and builds the
-                             truth targets. The only file here with no hepattn import.
+                             truth targets -- including the shower-level collapse. The only
+                             file here with no hepattn import.
   model.py                   ColliderMLModel, a thin LightningModule wrapper. The architecture
                              itself is assembled from the config, not from this file.
   main.py                    CLI entry point (Lightning's LightningCLI).
   configs/
-    calo_clustering.yaml     The training configuration, and the primary document of what the
-                             model IS: input features, encoder, decoder, all three task heads,
-                             losses and their weights, the optimiser and schedule. Heavily
-                             commented with the measurements behind each choice.
-    overlay_metric_aligned.yaml   Objective changes: energy-weighted mask loss, exclusive mask
-                             target. Applied on top of the above.
-    overlay_long_schedule.yaml    A longer training schedule, and the step arithmetic behind it.
+    pu0.yaml                 pileup 0, full detector. Self-contained.
+    pu200.yaml               pileup 200, barrel only. Self-contained.
   eval/
     dump.py                  Runs the model over an event window and writes an event store.
                              The only GPU-dependent step of the analysis.
     format.py                The on-disk store format. Mirrored by src/io/event_store.py.
     geometry.py              Calorimeter layer geometry: recovers 48 ECAL and 36 HCAL layers by
                              projecting barrel cells onto the stave normal.
-  scripts/
-    sweep_pred_threshold.py  The post-hoc threshold sweep that chose the object threshold of
-                             0.2 over the implicit argmax default.
-  slurm/                     Job scripts for the cluster this ran on. Both check GPU ECC health
-                             first: one card on the node has ~818 uncorrected errors and kills
-                             long jobs minutes in.
 
-ce_ai_1/                     Launchers for ce-ai-1, the machine the pu200 work runs on, and the
+ce_ai_1/                     Launchers for ce-ai-1, the machine everything now runs on, and the
                              record of what pileup-200 forced to change. NOT part of the mirror --
                              these are mine, so keeping them out of hepattn_colliderml/ is what
-                             lets verify_sync.sh still pass. Start at ce_ai_1/README.md.
-dias/                        Slurm launchers for DIAS, for the config as this repository now has
-                             it: they pass it by absolute path so a stale checkout cannot change
-                             what is trained, ask for a walltime the schedule fits, and fix the
-                             ECC preflight's device numbering. Mine, so likewise outside the
-                             mirror. Start at dias/README.md.
-                             (checkpoint/ was deleted 2026-08-11; see "The checkpoint" below)
+                             lets verify_sync.sh pass. Start at ce_ai_1/README.md.
 hepattn-changes.patch        My modifications to the upstream library.
 verify_sync.sh               Checks hepattn_colliderml/ against a hepattn checkout.
 ```
 
-The slurm scripts hardcode `/home/xucapfwi/hepattn/src/hepattn/experiments/colliderml` as
-their working directory, because that is where they run — Slurm copies a submitted script
-into a spool directory, so deriving the repository root from `$BASH_SOURCE` resolves to `/`.
-Moving this directory does not affect them, and should not: they address the checkout, not
-the mirror.
+**There are exactly two configs, one per pileup condition, and neither is an overlay on the
+other.** That replaced a stack of nineteen overlay files on 2026-08-12. Overlays meant the
+objective a run actually used depended on the ORDER of several `--config` flags, and because
+`tasks` is a YAML list, any overlay touching it replaced the whole list rather than merging into
+it — which is how one pu0 run ended up on a different mask objective from the one its base config
+documented. The two files are identical except where the data forces a difference, and those
+places are marked `PU200 DIFFERS` / `PU0 DIFFERS`; `diff configs/pu0.yaml configs/pu200.yaml` is
+the intended way to see what pileup changes.
+
+The sweep, variant and probe overlays that used to live here, the DIAS launchers, and the
+`mask_variants.py` / `affinity.py` modules they named were deleted in the same pass.
+`git log -- src/maskformer/` recovers all of them with the measurements recorded alongside.
 
 ## The checkpoint — and why there is no longer one here
 
@@ -163,7 +154,7 @@ the mirror.
 **Where checkpoints actually live.** Training writes them to
 `external/hepattn/src/hepattn/experiments/colliderml/logs/<run>/ckpts/`, which is gitignored and
 machine-local. Each run also writes its own fully-resolved `config.yaml` beside them — that file,
-not `configs/calo_clustering.yaml`, is the authoritative record of what was trained, because the
+not `configs/pu0.yaml`, is the authoritative record of what was trained, because the
 configs move on. Comet holds the training curves; the run URL is printed at launch and appears in
 the log.
 
@@ -172,77 +163,35 @@ table and figure regenerates from the stores alone.
 
 ## Running it
 
-Nothing below is needed to reproduce the thesis figures. That is `python -m scripts.make_figures`
-from the repository root, and it touches none of this.
+Nothing below is needed to reproduce the thesis figures. That is `python -m scripts.score` then
+`python -m scripts.make_thesis_figures` from the repository root, and neither touches any of this.
 
-> **On ce-ai-1, none of the commands in this section apply.** That machine has no Slurm, no
-> apptainer and no pixi, and the pu200 run needs different cuts to fit at all. See
-> [`ce_ai_1/README.md`](ce_ai_1/README.md), which covers both. What follows is the DIAS setup the
-> pu0 checkpoint was produced on, kept because it is the provenance of the reported results.
+Everything runs on **ce-ai-1** now: no Slurm, no container, no pixi. `ce_ai_1/env.sh` re-syncs
+this directory into the hepattn checkout on every launch, because `main.py` runs from the
+checkout and editing a config here without copying it across silently uses the stale copy.
 
-**Environment.** The cluster is RHEL7 (glibc 2.17) and the environment needs glibc 2.28+, so
-everything runs inside an Ubuntu 22.04 container:
+**Train.**
 
 ```bash
-apptainer build ~/ubuntu22.sif docker://ubuntu:22.04
+cd src/maskformer/ce_ai_1
+nohup ./train.sh pu0 > ../../../external/train_pu0.log 2>&1 &
 ```
 
-**Train.** ~2.9 h per epoch at 20000 events on one A100 with 32 CPUs, measured end to end:
+`NUM_TRAIN` and `MAX_EPOCHS` override the config for smoke tests; `CKPT=<path>` resumes. For
+pu200, size `max_epochs` from ~300 steps of a real run before committing — OneCycleLR is sized
+from total optimiser steps and cannot be resized mid-run, so a schedule that overruns its
+walltime never reaches its decay phase and its final checkpoint sits at a high learning rate.
+
+**Produce an event store.** ~2 minutes for the 50-event tuning window at pu0, ~25 for the
+500-event evaluation window, and about 360 kB per event.
 
 ```bash
-sbatch src/maskformer/dias/train_calo_clustering.sh
+CKPT=<a checkpoint under external/hepattn/.../logs/*/ckpts/> ./dump_store.sh pu0 tune
+CKPT=<same> ./dump_store.sh pu0 eval
 ```
 
-`dias/train_calo_clustering.sh`, not the mirrored `hepattn_colliderml/slurm/calo_clustering.sh`.
-The latter is the provenance of the checkpoint below and stays byte-identical to upstream; the
-former runs the config as *this repository* now has it, on a walltime and an allocation that
-configuration fits. The epoch time above is not a property of the model: the run is **input-bound**,
-and the same work took 5.2 h/epoch under the mirrored script's 12 CPUs. [`dias/README.md`](dias/README.md)
-has the measurements. Run `dias/smoke_calo_clustering.sh` first.
-
-Add the overlays to change the objective or the schedule:
-
-```bash
-python main.py fit --config configs/calo_clustering.yaml \
-                   --config configs/overlay_metric_aligned.yaml \
-                   --config configs/overlay_long_schedule.yaml
-```
-
-The long schedule does not fit one job's walltime and is meant to be resumed with `CKPT=`;
-`overlay_long_schedule.yaml` explains the arithmetic and the trap (a OneCycle schedule sized
-for twelve epochs but stopped at four never reaches its decay phase, and its final checkpoint
-is taken at a high learning rate).
-
-**Produce an event store.** ~12 minutes for 500 events at pu0, and about 320 kB per event:
-
-```bash
-CKPT=<a checkpoint from a training run, under external/hepattn/.../logs/*/ckpts/> \
-START=20250 NUM=500 OUT=~/eventstore sbatch \
-  src/maskformer/hepattn_colliderml/slurm/calo_dump_eventstore.sh
-```
-
-Then point `dataset.pu0.store` in `config/experiment.yaml` at the result, and everything from
-there on is numpy.
-
-### Dumping a pileup-200 store
-
-On ce-ai-1 this is `ce_ai_1/dump_store_pu200.sh tune|eval`, which has the three decisions below
-already made and explained. The rest of this section is the reasoning behind them.
-
-The same command, with three things to decide first, because none of them has a right default:
-
-- **`OUT` must be a different directory.** The store name encodes the event window, not the
-  pileup condition, so two dumps of the same event range would otherwise collide.
-- **`CHUNK` is the memory knob.** It defaults to 25 events per `.npz`, sized against pu0 cell
-  counts, and the dump holds a chunk in memory while writing it. Lower this first if the job
-  is killed for memory, and expect the store to be several times larger per event.
-- **`INCIDENCE_TOP_K` is left unset on purpose.** `eval/format.py` carries the measured value
-  and is the one place the choice is justified. Setting it here silently overrides that — it
-  did once, at 4 against format's 16 — so leave it alone unless the multi-owner study says the
-  truncation is binding.
-
-Then set `dataset.pu200.store`, `dataset.pu200.tune_store` and `dataset.pu200.windows` in
-`config/experiment.yaml` and check the result with `python -m scripts.show_config`.
+Then point `dataset.pu0.store` and `.tune_store` in `config/experiment.yaml` at the results, and
+everything from `scripts/` works with no GPU.
 
 ## What is deliberately not here
 
@@ -253,6 +202,11 @@ Then set `dataset.pu200.store`, `dataset.pu200.tune_store` and `dataset.pu200.wi
   measured at AUC 0.80, too weak to threshold on, because the hits it rejects are real deposits
   from particles just below the pT cut rather than noise. Worth revisiting at pu200, where the
   population it would reject is a different thing entirely.
-- **Dynamic query initialisation** (`overlay_dynamic_queries.yaml`), likewise not used by the
-  reported checkpoint (`dynamic_queries: false`).
+- **Dynamic query initialisation**, likewise not used by the reported checkpoint
+  (`dynamic_queries: false`).
+- **The sweep, variant and probe configurations.** Nineteen overlay files, the `mask_variants.py`
+  and `affinity.py` modules two of them named, and the DIAS launchers that ran them, all deleted
+  on 2026-08-12 in favour of one config per pileup condition. They are the record of what was
+  tried and did not work, so they are worth finding rather than reconstructing:
+  `git log -- src/maskformer/` recovers every one with the measurements written beside it.
 - **`hepattn` itself**, for the authorship reason above.

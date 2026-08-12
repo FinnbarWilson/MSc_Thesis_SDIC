@@ -16,14 +16,14 @@ Measured on cell pairs within 0.06 m, fitted on the tune window and scored on th
     learned, geometry + embedding        0.817
 
 So the encoder's embeddings carry co-membership information worth **+0.075 AUC over geometry**, and
-raw cosine -- which is what `dias/probe_encoder_affinity.py` measured, and what led to the earlier
+raw cosine -- which is what the encoder-affinity probe measured (deleted with dias/; see git history), and what led to the earlier
 and wrong conclusion that the encoder knew nothing -- is no better than a ruler. Cosine over 256
 dimensions is dominated by variance unrelated to co-membership; a learned readout of the same
 vectors is not.
 
 WHERE THE EMBEDDINGS COME FROM
 ------------------------------
-A sidecar directory of per-event `.npz` files written by `dias/extract_embeddings.py`, NOT the event
+A sidecar directory of per-event `.npz` files written by the embedding extractor (deleted with dias/; see git history), NOT the event
 store. The store has a format version and a contract checked on load, and adding a 5.5 GB array to
 it to test a hypothesis would mean bumping that format and updating `src/io/event_store.py` before
 knowing whether the hypothesis holds. If this earns its place, moving it into the store is the right

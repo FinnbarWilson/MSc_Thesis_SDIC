@@ -148,7 +148,7 @@ def check_layer_counts(centres_by_subsystem: Mapping[str, np.ndarray], populated
             there would reject a valid store -- but defaulting to all four keeps the check at
             full strength for anyone who does not pass it.
 
-    WHY A SUBSET IS ALLOWED AT ALL. `configs/overlay_pu200_barrel.yaml` cuts |eta| < 0.88, which
+    WHY A SUBSET IS ALLOWED AT ALL. `configs/pu200.yaml` cuts |eta| < 0.88, which
     removes every endcap cell, so calibration finds {'ecb': 48, 'hcb': 36} and nothing else. That
     is correct, not a failure. The guard's real job -- catching a dataset change that silently
     renumbers layers -- is unaffected: every subsystem that HAS cells is still required to produce

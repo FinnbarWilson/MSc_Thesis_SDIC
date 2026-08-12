@@ -1,6 +1,6 @@
 # Shared environment for the ce-ai-1 runs. Sourced by the scripts beside it, not run directly.
 #
-# WHY THESE SCRIPTS ARE NOT IN hepattn_colliderml/slurm/
+# WHY THESE SCRIPTS ARE NOT IN hepattn_colliderml/
 #
 # Everything under hepattn_colliderml/ is a verbatim mirror of the hepattn checkout and is checked
 # by verify_sync.sh. These are machine-specific launchers for ce-ai-1 and are mine, not upstream's,
@@ -16,6 +16,9 @@
 #   3 GPUs, one with 818 uncorrected ECC        one A100 80GB, healthy: no ECC preflight
 #   --mem=128G                                  1.5 TB RAM: the host-memory ceiling is gone
 #   $HOME had room                              / has ~100 GB free: everything is on the datastore
+#
+# The DIAS launchers themselves were deleted on 2026-08-12; `git log -- src/maskformer/dias/`
+# recovers them. This table is kept because it is the record of what the move actually forced.
 
 # One place defines where things live, and it is not this file.
 # shellcheck disable=SC1091
@@ -28,8 +31,8 @@ PYTHON="$VENV_TRAIN/bin/python"
 #
 # This is not tidiness, it is a correctness trap that has already bitten once. main.py runs from
 # the CHECKOUT, which holds copies made at install time -- so editing
-# src/maskformer/hepattn_colliderml/configs/overlay_pu200_barrel.yaml in the repository and launching a
-# run silently uses the stale copy. The symptom is a config change that appears to do nothing
+# src/maskformer/hepattn_colliderml/configs/pu0.yaml in the repository and launching a run
+# silently uses the stale copy. The symptom is a config change that appears to do nothing
 # (observed: max_epochs edited to 9, --print_config still reporting 3). The repository is the
 # source of record, so it wins here, every time, automatically.
 if [ -d "$EXP_DIR" ]; then
@@ -37,13 +40,12 @@ if [ -d "$EXP_DIR" ]; then
     cp -u "$_mirror"/*.py                "$EXP_DIR/"          2>/dev/null || true
     cp -u "$_mirror"/configs/*.yaml       "$EXP_DIR/configs/"  2>/dev/null || true
     cp -u "$_mirror"/eval/*.py            "$EXP_DIR/eval/"     2>/dev/null || true
-    cp -u "$_mirror"/scripts/*.py         "$EXP_DIR/scripts/"  2>/dev/null || true
     unset _mirror
 fi
 
 # Comet key. A 0600 file in the user's own config directory: outside the git worktree so it cannot
 # be committed, and not on the shared datastore, which holds the dataset and nothing else.
-# calo_clustering.yaml already reads the key from the environment rather than inline; this just
+# The configs already read the key from the environment rather than inline; this just
 # supplies it. Rotate it at comet.com if it has been shared anywhere.
 if [ -f "$COMET_ENV_FILE" ]; then
     # shellcheck disable=SC1091

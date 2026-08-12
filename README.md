@@ -124,7 +124,7 @@ apptainer exec --nv --bind /home/xucapfwi/ColliderML_data ~/ubuntu22.sif \
   <checkpoint> --start-event 20250 --num-events 500 --out ~/eventstore
 ```
 
-or, on the cluster, via `src/maskformer/hepattn_colliderml/slurm/calo_dump_eventstore.sh`.
+or via `src/maskformer/ce_ai_1/dump_store.sh <pu0|pu200> <tune|eval>`.
 A pu0 store costs roughly 320 kB per event: about 160 MB for the 500-event evaluation window.
 
 Point `dataset.pu0.store` and `dataset.pu0.tune_store` at the results.
@@ -189,10 +189,10 @@ The order to work in, and what each step is waiting on:
 > order to run steps 0-5 below. Read it before step 1.
 
 0. **Train a pu200 checkpoint.** There is not one yet; the checkpoint in `src/maskformer/` is
-   pileup-0. `ce_ai_1/benchmark_pu200.sh` then `ce_ai_1/train_pu200.sh`.
+   pileup-0. `ce_ai_1/train.sh pu200`.
 1. **Dump the two stores.** `src/maskformer/README.md` has the command and the three settings
    that need deciding for pu200 (`OUT`, `CHUNK`, and leaving `INCIDENCE_TOP_K` alone);
-   `ce_ai_1/dump_store_pu200.sh` has them already made.
+   `ce_ai_1/dump_store.sh` has them already made.
 2. **Fill in `dataset.pu200`** — the two store paths and the four window numbers — then run
    `python -m scripts.show_config` and read it back. The store validates its own metadata
    against the config on open, so a mismatch stops the run rather than shifting the numbers.

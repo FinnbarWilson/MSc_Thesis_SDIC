@@ -82,7 +82,7 @@ dataset:
   # events and labelling them pu200.
   pu200:
     # STAGED, NOT YET PRODUCED. Neither directory exists yet: they are the paths
-    # src/maskformer/ce_ai_1/dump_store_pu200.sh will write, spelled out here so that
+    # src/maskformer/ce_ai_1/dump_store.sh will write, spelled out here so that
     # producing the stores is the only remaining step and nobody has to re-derive the
     # naming. The name is built by eval/dump.py as
     #   <dataset_prefix>_<start>_<start+num>_v<FORMAT_VERSION>
@@ -92,8 +92,8 @@ dataset:
     # far better than scoring pu0 events under a pu200 label. Until the dump runs, every
     # command below will stop with a message naming the missing key.
     #
-    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store_pu200.sh tune
-    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store_pu200.sh eval
+    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store.sh pu200 tune
+    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store.sh pu200 eval
     store: /mnt/ai-datastore/finnbar/eventstore_pu200/ttbar_pu200_7500_8000_v2
     tune_store: /mnt/ai-datastore/finnbar/eventstore_pu200/ttbar_pu200_7000_7050_v2
     # The store carries its own window and asserts it is disjoint from the
@@ -102,8 +102,8 @@ dataset:
     # the two pu200 stores were actually dumped over.
     #
     # These are now DECIDED, and they are the windows
-    # src/maskformer/ce_ai_1/dump_store_pu200.sh dumps. They sit in the gap that
-    # src/maskformer/hepattn_colliderml/configs/overlay_pu200_barrel.yaml leaves free:
+    # src/maskformer/ce_ai_1/dump_store.sh dumps. They sit in the gap that
+    # src/maskformer/hepattn_colliderml/configs/pu200.yaml leaves free:
     #   train [0, 6000)  val [6000, 6250)  test [6250, 6750)
     #   tune  [7000, 7050)      eval [7500, 8000)      spare [8000, 10000)
     # Only 10,000 events were downloaded (shards 0-99 of 1000), so these cannot
@@ -118,7 +118,7 @@ dataset:
     overrides:
       # The barrel cut, and the reason it has to be declared here rather than inherited.
       #
-      # configs/overlay_pu200_barrel.yaml restricts BOTH cells and particles to |eta| < 0.88, so
+      # configs/pu200.yaml restricts BOTH cells and particles to |eta| < 0.88, so
       # every target in the pu200 store satisfies that; the value outside this block is pu0's 4.0.
       # src/io/event_store.py compares the two and refused to open the store until they agreed --
       # which is the check working, not an obstacle. It is declared as an override rather than
@@ -145,7 +145,7 @@ dataset:
         #   5 epochs       0.663    0.378     0.432    0.523     17.2
         #
         # Purity +36% relative and F1 +24% for nothing but training, with thresholds untouched --
-        # which is the logit RANKING improving, the one thing scripts/sweep_pred_threshold.py
+        # which is the logit RANKING improving, the one thing scripts/scan_mf_threshold.py
         # showed no cut point can fix.
         checkpoint: external/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260809-T132559/ckpts/epoch=004-val_loss=57.24615.ckpt
         # The pu0 working point (0.5 / 0.2) is a MEASUREMENT on pu0 -- the object

@@ -7,7 +7,7 @@
 
 The default is 100 shards of ttbar_pu200 -- 100 events each, so 10,000 events, about 297 GB
 (219 GB calo_hits + 78 GB particles). That is the window budget in
-src/maskformer/hepattn_colliderml/configs/overlay_pu200.yaml.
+src/maskformer/hepattn_colliderml/configs/pu200.yaml.
 
 The two collections are downloaded under matching filenames on purpose: ColliderMLDataset pairs a
 particles shard with the calo_hits shard of the SAME NAME and uses the intersection of the two

@@ -6,7 +6,7 @@ this directory is where the differences live rather than being edited into the p
 
 These are **not** in `hepattn_colliderml/`. Everything under that directory is a verbatim mirror of
 the hepattn checkout, checked by `verify_sync.sh`; these launchers are mine and would make that
-check fail against a clean upstream. `configs/overlay_pu200_barrel.yaml` *is* in the mirror, because it is
+check fail against a clean upstream. `configs/pu200.yaml` *is* in the mirror, because it is
 an experiment config that `main.py` loads by path, exactly like the other overlays.
 
 ## What changed moving off DIAS
@@ -22,8 +22,8 @@ an experiment config that `main.py` loads by path, exactly like the other overla
 
 Two consequences worth stating. The **ECC preflight is gone** — it existed because Slurm kept
 handing out one specific faulty card, and there is nothing to select between here. And the run no
-longer has to be **split into resumable jobs**: `overlay_long_schedule.yaml` exists because a
-12-epoch schedule could not fit a 20 h cap, whereas `overlay_pu200_barrel.yaml` sizes a single ~21 h
+longer has to be **split into resumable jobs**: the old overlay stack had a long-schedule
+variant because a 12-epoch schedule could not fit a 20 h cap, whereas `configs/pu200.yaml` sizes a single ~21 h
 schedule that reaches its OneCycle decay in one go.
 
 The GPU reports MIG enabled, but as a single `7g.80gb` instance — that is the whole card, not a
@@ -51,7 +51,7 @@ names**: that commit no longer exists upstream. See `setup/README.md`.
 
 ## Why pu200 is not pu0 with more hits
 
-Measured on `ttbar_pu200` shard 0, against the cuts `calo_clustering.yaml` applies:
+Measured on `ttbar_pu200` shard 0, against the cuts `configs/pu200.yaml` applies:
 
 | | pu0 (config built for) | pu200 (measured) | ratio |
 |---|---|---|---|
@@ -59,11 +59,11 @@ Measured on `ttbar_pu200` shard 0, against the cuts `calo_clustering.yaml` appli
 | target particles/event | ~600 | 8,182 | 13.6× |
 
 MaskFormer's memory is driven by `num_queries × num_hits`. pu0 sits at 2.2e7 and *already OOMs at
-4×* — `calo_clustering.yaml` records `batch_size: 4` OOMing an 80 GB A100. A faithful pu200 event
+4×* — the configs record `batch_size: 4` OOMing an 80 GB A100. A faithful pu200 event
 is 4.4e9, **about 200× the pu0 footprint**: two orders of magnitude past the card, not a tuning
 problem.
 
-`configs/overlay_pu200_barrel.yaml` buys that back with two measured cuts — `calohit_min_energy`
+`configs/pu200.yaml` buys that back with two measured cuts — `calohit_min_energy`
 2e-4 → 1e-3 and `particle_min_pt` 0.5 → 2.0 — landing at 117k hits and 277 targets per event, a
 2.66× footprint. Its header carries the full arithmetic, the energy cost, and the OOM ladder.
 
@@ -75,14 +75,14 @@ The comparison stays controlled; only its comparability to pu0 is lost. Say so w
 ## Event budget
 
 100 shards × 100 events = **10,000 events** downloaded (of 1000 shards available). Windows, all
-disjoint, split between `overlay_pu200_barrel.yaml` and `config/experiment.yaml`:
+disjoint, split between `configs/pu200.yaml` and `config/experiment.yaml`:
 
 ```
 train [0, 6000)   val [6000, 6250)   test [6250, 6750)
 CLUE tune store [7000, 7050)    CLUE eval store [7500, 8000)    spare [8000, 10000)
 ```
 
-`train_pu200.sh` refuses to start if `NUM_TRAIN` would run into the store windows, because
+`train.sh pu200` refuses to start if `NUM_TRAIN` would run into the store windows, because
 training on the events the comparison is scored over is the one error that makes every downstream
 number wrong while looking fine. To go beyond 10,000 events:
 `python setup/download_data.py --shards 200` — it resumes and skips what is already there.
@@ -97,14 +97,14 @@ python setup/download_data.py                 # ~297 GB, resumable
 python setup/verify_data.py                   # 100 matched shards per collection, 10,000 events
 
 # 1. does it fit, and how fast? ~15 min. Prints the max_epochs for a 22 h run.
-./benchmark_pu200.sh
+NUM_TRAIN=600 MAX_EPOCHS=1 ./train.sh pu200   # ~300 steps, then read the rate and stop
 
-# 2. set trainer.max_epochs in configs/overlay_pu200_barrel.yaml from what step 1 printed, then:
-nohup ./train_pu200.sh > ~/train_pu200.log 2>&1 &
+# 2. set trainer.max_epochs in configs/pu200.yaml from what step 1 printed, then:
+nohup ./train.sh pu200 > ../../../external/train_pu200.log 2>&1 &
 
 # 3. both stores, from the trained checkpoint
-CKPT=<logs/.../ckpts/....ckpt> ./dump_store_pu200.sh tune
-CKPT=<logs/.../ckpts/....ckpt> ./dump_store_pu200.sh eval
+CKPT=<logs/.../ckpts/....ckpt> ./dump_store.sh pu200 tune
+CKPT=<logs/.../ckpts/....ckpt> ./dump_store.sh pu200 eval
 
 # 4. point config/experiment.yaml at them, then everything below is numpy
 #    dataset.active: pu200, dataset.pu200.store / .tune_store / .overrides.maskformer.checkpoint
@@ -116,7 +116,7 @@ python -m scripts.score --algo maskformer
 python -m scripts.make_figures
 ```
 
-**Step 1 is not optional.** `overlay_pu200_barrel.yaml` sizes `max_epochs` from an *estimate* of
+**Step 1 is not optional.** `configs/pu200.yaml` currently carries pu0's `max_epochs`, an *estimate* of
 0.25 events/s extrapolated from pu0's measured 1.13. OneCycleLR is sized from total steps, so a
 wrong estimate does not just give a run of the wrong length — it gives a run whose final
 checkpoint sits at a high learning rate. That is exactly how the hit-filter run was wasted.
@@ -131,9 +131,9 @@ under-tuned, which is the one way this comparison can be unfair to CLUE.
 
 Nothing here touches it. `dataset.active` in `config/experiment.yaml` is the only switch, and it
 scopes the stores, `results/<dataset>/`, `figures/<dataset>/` and the Optuna study names together —
-so a pu200 run cannot land on a pu0 table. `overlay_pu200_barrel.yaml` additionally logs to a separate
+so a pu200 run cannot land on a pu0 table. `configs/pu200.yaml` additionally logs to a separate
 Comet project, and every pu200 value it changes lives in the overlay rather than being edited into
-`calo_clustering.yaml`, so the pu0 configuration is still exactly what produced the checkpoint.
+`configs/pu0.yaml`, so the pu0 configuration is still exactly what produced the checkpoint.
 
 To regenerate the pu0 figures at any point, from the analysis env alone:
 
@@ -146,6 +146,6 @@ python -m scripts.make_figures
 
 `COMET_API_KEY` is read from `~/.config/colliderml/comet.env` (mode 0600) — outside the git
 worktree so it cannot be committed, and not on the shared datastore either.
-`calo_clustering.yaml` already took the key from the environment rather than inline; `env.sh` just
+The configs already take the key from the environment rather than inline; `env.sh` just
 supplies it. **Rotate the key at comet.com if it has been shared anywhere** — a Comet key allows
 writing to the workspace.

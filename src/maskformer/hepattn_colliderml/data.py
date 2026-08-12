@@ -105,7 +105,7 @@ class ColliderMLDataset(Dataset):
         # num_workers x this x decoded shard size, which is what ties worker count to memory.
         #
         # DEFAULT 8 IS THE HISTORICAL VALUE AND IS DELIBERATELY UNCHANGED, so pu0 and every existing
-        # config behave exactly as before. pu200 lowers it in configs/overlay_pu200_barrel.yaml,
+        # config behave exactly as before. pu200 lowers it in configs/pu200.yaml,
         # where a decoded shard is 4.0 GB against pu0's ~1.5 GB and 24 workers at 8 slots would
         # need ~690 GB. Measured there: 24 workers x 3 slots = 518 GB resident.
         #
@@ -1684,7 +1684,7 @@ class ColliderMLDataModule(LightningDataModule):
 
         # Only print train/val dataset details when actually training
         # `self.trainer` is None when the datamodule is used outside a Trainer, which analysis
-        # scripts do (scripts/sweep_pred_threshold.py builds it just to get a dataloader).
+        # scripts do (eval/dump.py builds it just to get a dataloader).
         if stage == "fit" and (self.trainer is None or self.trainer.is_global_zero):
             print(f"Created training dataset with {len(self.train_dset):,} events")
             print(f"Created validation dataset with {len(self.val_dset):,} events")

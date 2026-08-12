@@ -75,11 +75,10 @@ echo "=== [4/5] the mirrored colliderml subtree ==="
 # src/maskformer/hepattn_colliderml/ is the source of record for these files; verify_sync.sh
 # checks the two stay identical.
 DEST="$HEPATTN/src/hepattn/experiments/colliderml"
-mkdir -p "$DEST"/{configs,eval,scripts}
+mkdir -p "$DEST"/{configs,eval}
 cp "$REPO_ROOT/src/maskformer/hepattn_colliderml/"*.py          "$DEST/"
 cp "$REPO_ROOT/src/maskformer/hepattn_colliderml/configs/"*.yaml "$DEST/configs/"
 cp "$REPO_ROOT/src/maskformer/hepattn_colliderml/eval/"*.py      "$DEST/eval/"
-cp "$REPO_ROOT/src/maskformer/hepattn_colliderml/scripts/"*.py   "$DEST/scripts/" 2>/dev/null || true
 echo "copied $(ls "$REPO_ROOT/src/maskformer/hepattn_colliderml/"*.py | wc -l) modules + configs into the checkout"
 
 echo "=== [5/5] hepattn and its dependencies ==="
@@ -92,7 +91,7 @@ echo "=== [5/5] hepattn and its dependencies ==="
 # Upstream does not hit this because pixi resolves the interpreter itself rather than going
 # through pip's check. The interpreter genuinely is 3.12, which is what hepattn means.
 "$VENV_TRAIN/bin/pip" install -e "$HEPATTN" --no-build-isolation --ignore-requires-python 2>&1 | tail -5
-# flash-attn is required, not optional: calo_clustering.yaml sets attn_type: flash-varlen.
+# flash-attn is required, not optional: both configs set attn_type: flash-varlen.
 "$VENV_TRAIN/bin/pip" install -q "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.17/flash_attn-2.8.3%2Bcu128torch2.9-cp312-cp312-linux_x86_64.whl" \
     || echo "!!! flash-attn wheel failed -- attn_type: flash-varlen will not run"
 

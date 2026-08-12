@@ -109,7 +109,7 @@ def calibrate_layers(dataset: ColliderMLDataset, num_events: int) -> dict[str, l
             if selected.any():
                 pooled[name].append(geo.layer_depth(name, x[selected], y[selected], z[selected]))
 
-    # Only subsystems that actually have cells. A barrel-only sample (overlay_pu200_barrel.yaml
+    # Only subsystems that actually have cells. A barrel-only sample (configs/pu200.yaml
     # cuts |eta| < 0.88) has no endcap cells at all, so `ece` and `hce` are legitimately absent
     # and the counts are checked against what is present rather than against all four.
     populated = [name for name, depths in pooled.items() if depths]
