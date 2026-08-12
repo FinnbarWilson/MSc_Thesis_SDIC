@@ -78,6 +78,45 @@ ALGO_MARKERS: Mapping[str, str] = {
     "oracle_resolution": "v",
 }
 
+#: Particle classes, for the figures that describe the DATASET rather than a method.
+#:
+#: Same science palette, and "All" is the same grey the reference clusterings use, for the
+#: same reason: it is the total the classes are read against, not one more class competing
+#: with them. The three that carry almost all of the calorimeter energy -- charged hadrons,
+#: photons and electrons -- take the three loudest hues, and the rare classes take the rest.
+PARTICLE_CLASS_COLOURS: Mapping[str, str] = {
+    "all": "#474747",
+    "charged_hadron": "#0C5DA5",
+    "neutral_hadron": "#00B945",
+    "electron": "#FF2C00",
+    "photon": "#845B97",
+    "muon": "#FF9500",
+    "tau": "#9e9e9e",
+    "neutrino": "#9e9e9e",
+    "other": "#9e9e9e",
+}
+
+PARTICLE_CLASS_LABELS: Mapping[str, str] = {
+    "all": "All",
+    "charged_hadron": "Charged hadrons",
+    "neutral_hadron": "Neutral hadrons",
+    "electron": "Electrons",
+    "photon": "Photons",
+    "muon": "Muons",
+    "tau": "Taus",
+    "neutrino": "Neutrinos",
+    "other": "Other",
+}
+
+
+def particle_class_colour(name: str) -> str:
+    return PARTICLE_CLASS_COLOURS.get(name, "#9e9e9e")
+
+
+def particle_class_label(name: str) -> str:
+    return PARTICLE_CLASS_LABELS.get(name, name.replace("_", " ").capitalize())
+
+
 #: Reference clusterings are drawn dashed so they read as context even in greyscale.
 ALGO_LINESTYLES: Mapping[str, str] = {
     "oracle_geometric": "--",

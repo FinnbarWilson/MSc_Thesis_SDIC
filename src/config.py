@@ -76,6 +76,35 @@ def settings() -> dict:
     return deepcopy(_CACHE)
 
 
+def settings_for(dataset: str) -> dict:
+    """Settings resolved against a NAMED dataset, whatever ``dataset.active`` says.
+
+    Almost nothing should want this. The pipelines all run under one pileup condition at a
+    time, and reading the other one's values by accident is the failure ``active`` exists to
+    prevent -- which is why the active dataset is not a parameter anywhere else.
+
+    The exception is a script that describes a dataset rather than scoring it. pu200 overrides
+    ``particle_max_abs_eta`` to 0.88 for the barrel-only run, so drawing pu0's cuts from the
+    ambient config while pu200 is active would put the selection lines in the wrong place on
+    the figure and quietly misreport what the cuts cost.
+
+    Nothing is cached: this bypasses the module state rather than replacing it, so a call here
+    cannot change what :func:`settings` returns to anyone else.
+    """
+    if dataset not in DATASETS:
+        msg = f"dataset must be one of {list(DATASETS)}, got {dataset!r}"
+        raise ValueError(msg)
+    if _RAW is None:
+        reload()
+    assert _RAW is not None
+    raw = deepcopy(_RAW)
+    raw["dataset"]["active"] = dataset
+    if dataset not in raw["dataset"]:
+        msg = f"there is no dataset.{dataset} block in {CONFIG_PATH}"
+        raise ValueError(msg)
+    return _resolve(raw)
+
+
 def frozen() -> MappingProxyType:
     """A read-only view of the merged settings, with no copying cost."""
     if _CACHE is None:

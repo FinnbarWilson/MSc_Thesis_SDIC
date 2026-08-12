@@ -42,29 +42,31 @@
 # never overwrite a pu0 table, and the two sets of numbers cannot be mixed into
 # one figure by forgetting which is which.
 dataset:
-  active: pu200          # pu0 | pu200
+  active: pu0            # pu0 | pu200
 
   pu0:
-    # Dumped from the SIMPLIFIED-BASELINE checkpoint: run 48247, 7 epochs, AdamW,
-    # accumulate_grad_batches 1, no incidence head, mask_dice = mask_bce = 1.0.
-    #   epoch=006-val_loss=4.92620.ckpt
+    # SHOWER-LEVEL TRUTH. Dumped 2026-08-12 from run 20260811-T121619,
+    #   epoch=002-val_loss=39.14410.ckpt
+    # 3 epochs over events [0, 20000), AdamW at batch 1, mask_dice 20 + mask_focal 1, 400 queries,
+    # and `particle_collapse_shower_secondaries: true` -- one target per particle ENTERING the
+    # calorimeter rather than per Geant particle depositing in it.
     #
-    # THE 4.93 IS NOT COMPARABLE TO THE PREVIOUS CHECKPOINT'S 18.06. That run's objective was
-    # dice 5 + focal 20 plus an incidence head at kl_div weight 100; this one is dice 1 + bce 1
-    # with no incidence term at all. Different sum, different scale. Compare the two by the
-    # metrics in results/, never by their losses.
+    # THE 39.1 IS NOT COMPARABLE TO THE PREVIOUS CHECKPOINT'S 4.93, and the gap is not a
+    # regression. That run used mask_dice 1 + mask_bce 1 against a target with positive rate
+    # 4.7e-04; this one uses dice 20 + focal 1 against one at 3.8e-03. Different terms, different
+    # weights, different target density -- so a different sum. Compare them through results/,
+    # never through their losses. Val loss was still falling at the final checkpoint
+    # (42.8 -> 40.1 -> 39.1), so this model is step-limited rather than converged.
     #
-    # Format 2, but `has_incidence: false` -- the store's own metadata says so. The head is gone
-    # from the config, so eval/dump.py writes width-0 mf_incidence arrays and
-    # `maskformer_incidence` CANNOT BE SCORED from this store. That is the documented cost of
-    # the ablation, not a dump that went wrong. The old store is kept beside it for that
-    # comparison:  /home/xucapfwi/eventstore_ep003_v2/ttbar_pu0_20250_20750_v2
-    store: /home/xucapfwi/MSc_Thesis_SDIC/external/eventstore_ep006/ttbar_pu0_20250_20750_v2
-    # [20000, 20050) -- disjoint from the eval window, and where the MaskFormer working point
-    # below is chosen, so that threshold is not selected on the events it is scored over. Note
-    # these 50 events WERE the training run's validation split, so they are unseen by the
-    # optimiser but not by model selection. Same status as CLUE's tuning window.
-    tune_store: /home/xucapfwi/MSc_Thesis_SDIC/external/eventstore_ep006/ttbar_pu0_20000_20050_v2
+    # The store's own metadata carries the truth definition, and it is in event_store.py's
+    # CONTRACT_KEYS, so pointing this at a store dumped under the old definition fails loudly
+    # instead of scoring one method's clusters against the other's truth.
+    store: /mnt/ai-datastore/finnbar/eventstore_pu0/ttbar_pu0_20250_20750_v2
+    # [20000, 20050) -- disjoint from the eval window, and where BOTH the MaskFormer working
+    # point and CLUE's parameters are chosen, so neither is selected on the events it is scored
+    # over. Note these 50 events WERE the training run's validation split, so they are unseen by
+    # the optimiser but not by model selection. Same status as CLUE's tuning window.
+    tune_store: /mnt/ai-datastore/finnbar/eventstore_pu0/ttbar_pu0_20000_20050_v2
     windows:
       eval_start: 20250
       eval_events: 500
@@ -398,12 +400,26 @@ clue:
   # efficiency for a reason belonging to the harness rather than to the algorithm -- the mirror
   # image of the unfairness that collapsing the truth removed from the model's side.
   #
-  # NOT YET TUNED. 0.05 is a placeholder of the right order (an ECAL shower is ~0.02-0.05 wide in
-  # angle), NOT a measurement, and it is the one CLUE parameter the per-subsystem Optuna search
-  # cannot reach -- linking is cross-subsystem by definition, so it needs its own scan over the
-  # tune store after the per-subsystem search converges. Do that before quoting any CLUE number.
-  # Too large merges genuinely separate showers and purity falls; too small and 42% of targets
-  # stay split. The split_rate and merge_rate columns are what to read it off.
+  # SCANNED 2026-08-12 (scripts.scan_link_radius, 8 radii x 50 tuning events;
+  # results/pu0/link_radius_scan.parquet). 0.05 is the f1 optimum, and the honest headline is
+  # that IT BARELY MATTERS: f1 0.5056 unlinked against 0.5070 here, which is noise on 50 events.
+  #
+  #   radius   eff     pur     split   merge   clusters/ev
+  #   0.00     0.558   0.462   0.231   0.120   242
+  #   0.05     0.543   0.476   0.207   0.122   229
+  #   0.20     0.320   0.481   0.091   0.169   128
+  #
+  # WHY IT IS KEPT ANYWAY, and it is the split/merge columns rather than f1 that justify it:
+  # linking removes 2.4 points of splitting for 0.2 points of added merging, a 12:1 trade, and
+  # split_rate is a reported metric in its own right. What it does NOT do is raise efficiency,
+  # and that is a real finding: rejoining a shower's ECAL and HCAL halves should help, but at pu0
+  # the (eta, phi) centroid separation between DIFFERENT showers is comparable to the offset
+  # between one shower's two halves, so a centroid-distance criterion cannot tell them apart and
+  # gains and losses cancel. 13 fewer clusters per event, roughly half of them wrong merges.
+  #
+  # THE FIX IF IT IS EVER WORTH IT is a depth-aware criterion -- require the two clusters to be
+  # radially consecutive and roughly collinear from the origin, not merely close in angle. That
+  # is a better linker rather than a different radius, so widening this number will not find it.
   link_radius: 0.05
   search:
 #
@@ -427,8 +443,16 @@ clue:
     # -- the pu0 ranges needed widening once already, and an optimum on a bound is not an
     # optimum.
     etaphi:
-      ecb: {d_c_2d: [1.0e-3, 0.20], rho_c_2d: [1.0e-5, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
-      ece: {d_c_2d: [1.0e-3, 0.20], rho_c_2d: [1.0e-5, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
+      # ECAL LOWER BOUNDS DROPPED after the first shower-level tune hit both of them:
+      # ecb.rho_c_2d landed at 1.01e-05 against a 1.0e-05 floor and ece.d_c_2d at 1.009e-03
+      # against 1.0e-03. Not what widening the upper bounds anticipated, and the mechanism is
+      # worth recording: with a linking pass above it, the 2D stage no longer has to produce
+      # shower-sized objects. It does better making FINE, INCLUSIVE per-layer clusters -- small
+      # d_c, low density threshold, so few cells are discarded as noise -- and letting the 3D
+      # pass and the cross-subsystem link assemble them. The optimum moved coarser in 3D
+      # (d_c_3d 0.0146 -> 0.029 for ecb) and finer in 2D at the same time.
+      ecb: {d_c_2d: [1.0e-4, 0.20], rho_c_2d: [1.0e-7, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
+      ece: {d_c_2d: [1.0e-4, 0.20], rho_c_2d: [1.0e-7, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
       hcb: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
       hce: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
 
@@ -464,9 +488,26 @@ clue:
 # `dataset.pu200.overrides.maskformer` -- because a pu0-trained model evaluated on pu200
 # measures domain shift rather than the architecture.
 maskformer:
-  checkpoint: /home/xucapfwi/MSc_Thesis_SDIC/external/logs/ColliderML_Calo_Clustering_20260805-T172452/ckpts/epoch=006-val_loss=4.92620.ckpt
-  mask_threshold: 0.5
-  object_threshold: 0.2
+  checkpoint: /home/finn/MSc_Thesis_SDIC/external/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260811-T121619/ckpts/epoch=002-val_loss=39.14410.ckpt
+
+  # RE-SCANNED 2026-08-12 on the tuning window under shower-level truth, by f1 -- the same
+  # criterion and the same window CLUE's Optuna search uses, so neither method picks its working
+  # point on the events it is scored over and neither picks it by a different rule.
+  #
+  # Was 0.5 / 0.2, which was swept against the per-fragment truth. On this target that pair gives
+  # eff 0.685 / pur 0.409 / f1 0.512 with 310 clusters per event against 186 true targets --
+  # over-predicting the COUNT by 1.7x while getting the SIZE right (60.5 cells against a truth
+  # median of 57). Moving the object threshold alone fixes it: 0.15 / 0.5 gives
+  # eff 0.520 / pur 0.579 / f1 0.548 at 160 clusters.
+  #
+  # THE OBJECT THRESHOLD IS DOING ALL THE WORK AND THAT IS THE INTERESTING PART. Across the whole
+  # mask_scan at object 0.5, f1 moves only 0.546-0.548 and mean cluster size 97 -> 92 cells. The
+  # mask probabilities are near-bimodal, so where the mask cut is put barely matters -- the head
+  # knows which cells belong. What it gets wrong is HOW MANY objects there are. That is the
+  # opposite of the pu200 barrel diagnosis ("the MASKS are the bottleneck", f1 flat at 0.338-0.359
+  # across the entire grid), and it is why the mask objective is NOT the thing to change here.
+  mask_threshold: 0.15
+  object_threshold: 0.5
   mask_scan: [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
   object_scan: [0.05, 0.1, 0.2, 0.3, 0.5]
   incidence_floor: 0.0

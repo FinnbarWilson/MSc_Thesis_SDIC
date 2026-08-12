@@ -47,3 +47,9 @@ results/*/soft_particles_*.parquet
 # tracked copy would be 86% of the repository for something no figure needs to be handed.
 # The SCORED tables beside them (particles_*.parquet, clusters_*.parquet) are results and stay.
 results/*/anatomy_particles.parquet
+
+# Same status, from make_dataset_figures.py --rebuild: the per-particle features read out of
+# the raw ColliderML parquet. Rebuildable only on a machine that HAS the raw shards, which is
+# why the small CSV beside it -- dataset_features_selection*.csv, what each cut costs -- is
+# tracked instead. That is the number a reader needs; the 100 MB table is not.
+results/*/dataset_features*.parquet

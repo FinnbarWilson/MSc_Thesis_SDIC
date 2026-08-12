@@ -25,6 +25,8 @@ from them.
 config/experiment.yaml   every shared decision, and the expectations checked against the store
 src/config.py            loads, merges and validates the experiment definition
 src/io/event_store.py    reads the event store; validates it against the config
+src/io/colliderml.py     reads the RAW dataset parquet - only for the dataset-features figures,
+                         which have to see the particles before the target cuts are applied
 src/clue/                the CLUE baseline and its hyperparameter search
 src/evaluation/          matching, metrics and differential binning - shared by both methods
 src/plotting/            figure generation
@@ -144,9 +146,24 @@ python -m scripts.score_soft                         # multi-owner capability st
 python -m scripts.scan_working_points                # the efficiency/purity trade-off curve
 python -m scripts.scan_soft_threshold                # soft metric vs mask threshold
 python -m scripts.make_figures                       # every figure, from the tables alone
+python -m scripts.make_dataset_figures               # what is IN the dataset; needs the raw parquet
 ```
 
 `make_figures` is the only one an assessor needs; it touches no checkpoint and no dataset.
+
+`make_dataset_figures` is the exception to everything below about the event store, and
+deliberately so. It reads the raw ColliderML parquet through `src/io/colliderml.py` rather
+than a store, because the store already holds the *target* set — particles that passed
+`particle_selection` and were already merged onto their shower's calorimeter-entering
+ancestor. The distributions those cuts were **chosen from** only exist one step earlier. It
+draws the cut values on top of them, and writes `results/<dataset>/dataset_features_selection.csv`:
+what each cut costs in particles per event and in calorimeter energy still owned by a target.
+
+There is no tracker panel — ColliderML ships silicon hits and this repo never downloaded them —
+so the analogues are the four calorimeter subsystems. `--no-collapse` draws the same figure
+with one row per Geant fragment, which is the definition every number up to and including
+`results/pu0/` was scored under; at pu0 the two differ by 561 depositing targets per event
+against 187, and by 0.31 of the calorimeter energy against 0.88.
 
 ## Running the other pileup condition
 
