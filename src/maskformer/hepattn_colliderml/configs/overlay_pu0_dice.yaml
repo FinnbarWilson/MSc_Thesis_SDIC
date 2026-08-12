@@ -94,8 +94,13 @@ model:
                 losses:
                   mask_dice: 20.0
                   mask_focal: 1.0
-                # Dice-only, as at pu200. loss.py has no `mask_bce` entry in cost_fns at all, so
-                # BCE could not be a matching cost even if wanted.
+                # Dice-only, as at pu200, and as the CLD experiment does (it comments its
+                # `mask_bce: 1.0` cost out and keeps `mask_dice: 1.0`).
+                #
+                # CORRECTION 2026-08-12: an earlier version of this comment claimed loss.py has
+                # no `mask_bce` entry in cost_fns and that BCE therefore COULD NOT be a matching
+                # cost. That is false -- loss.py:392 registers it. Dice-only is a choice here,
+                # not a constraint, and it happens to be the same choice CLD made.
                 costs:
                   mask_dice: 1.0
                 null_weight: 1.0
