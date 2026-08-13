@@ -39,7 +39,8 @@ setup/                   fresh clone -> reproduced result: both environments, an
 tests/                   scorer identity tests and the CLUE periodic-metric regression
 results/<dataset>/       pooled parquet tables, one directory per pileup condition
 figures/<dataset>/       generated figures, likewise
-docs/                    the status notes and thesis chapter plans
+docs/                    gitignored: status notes and thesis chapter plans, kept
+                         locally and deliberately not published
 external/                gitignored: everything setup/ builds (hepattn checkout, both
                          environments). Delete it to return the clone to its committed state
 ```
