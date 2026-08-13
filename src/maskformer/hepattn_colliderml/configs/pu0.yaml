@@ -18,6 +18,13 @@
 # See config/experiment.yaml under `particle_selection` for the measurements behind it. Results
 # produced before 2026-08-11 used the other definition and are not comparable.
 
+# The Comet experiment name AND the log directory name -- hepattn's CLI links `name` to both
+# (utils/cli.py: link_arguments("name", "trainer.logger.init_args.name") and
+# dirname = f"{name}_{timestamp}"). WITHOUT THIS KEY IT DEFAULTS TO "hepattn", which is what
+# every run between 2026-08-12 and 2026-08-13 was logged as -- indistinguishable in the Comet
+# list except by timestamp. Keep the two conditions' names distinct.
+name: ColliderML_pu0
+
 seed_everything: 42
 
 data:

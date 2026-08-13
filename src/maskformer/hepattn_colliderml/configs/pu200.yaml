@@ -24,6 +24,9 @@
 # launch, watch ~300 steps, set it from the measured rate, and relaunch. OneCycleLR is sized from
 # total steps and cannot be resized mid-run.
 
+# See pu0.yaml for why this key must exist. PU0 DIFFERS: ColliderML_pu0.
+name: ColliderML_pu200
+
 seed_everything: 42
 
 data:
@@ -178,7 +181,7 @@ trainer:
     class_path: hepattn.utils.loggers.MyCometLogger
     init_args:
       workspace: finnbarwilson
-      project: colliderml-calo-clustering
+      project: colliderml-calo-clustering-pu200
       online: true
 
   callbacks:
