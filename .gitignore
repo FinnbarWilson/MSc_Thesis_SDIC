@@ -6,6 +6,7 @@ __pycache__/
 .DS_Store
 .venv/
 env/
+docs/
 
 # --- Build artefacts, all under one directory -------------------------------
 # `setup/` builds everything the GPU half needs into external/: the hepattn checkout, the

@@ -41,14 +41,10 @@ subsystems — ECAL barrel/endcap, HCAL barrel/endcap — of 48, 48, 36 and 36 l
 | events on disk | 100,000 (100 shards × 1,000) | 10,000 (100 shards × 100) |
 | cells/event after zero suppression | ~22,000 | ~117,000 |
 | cell energy threshold | 2 × 10⁻⁴ GeV | 2 × 10⁻⁴ GeV |
-| cell \|η\| cut | none | **≤ 0.88** |
+| cell \|η\| cut | 4.0 | **≤ 0.88** |
 | train / val / test | [0, 20000) / [20000, 20250) / [20250, 20750) | [0, 6000) / [6000, 6250) / [6250, 6750) |
 | CLUE tune store | [20000, 20050), 50 events | [7000, 7050), 50 events |
 | evaluation store | [20250, 20750), 500 events | [7500, 8000), 500 events |
-
-**Zero suppression at 2 × 10⁻⁴, not 10⁻³.** The looser threshold was measured to remove ~84% of
-cells and shred clusters — median cells per particle fell 15 → 4. State this; it is a real choice
-with a measurement behind it.
 
 **Barrel-only at pu200.** The HCAL barrel reaches r = 3441 mm at |z| ≤ 3450 mm, so a particle
 steeper than η = 0.883 leaves through the barrel end and deposits the rest of its shower in the
