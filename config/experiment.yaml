@@ -45,28 +45,31 @@ dataset:
   active: pu0            # pu0 | pu200
 
   pu0:
-    # SHOWER-LEVEL TRUTH. Dumped 2026-08-12 from run 20260811-T121619,
-    #   epoch=002-val_loss=39.14410.ckpt
-    # 3 epochs over events [0, 20000), AdamW at batch 1, mask_dice 20 + mask_focal 1, 400 queries,
-    # and `particle_collapse_shower_secondaries: true` -- one target per particle ENTERING the
-    # calorimeter rather than per Geant particle depositing in it.
+    # SHOWER-LEVEL TRUTH, min 10 cells. Dumped 2026-08-13 from run hepattn_20260812-T133423,
+    #   epoch=002-val_loss=1.85281.ckpt
+    # 3 epochs / 60,000 steps over events [0, 20000), AdamW at batch 1, 400 queries,
+    # mask_dice 1 + mask_bce 1 with dice-only costs, object_bce 0.1 in BOTH loss and cost,
+    # `particle_collapse_shower_secondaries: true` and `particle_min_num_calohits: 10`.
     #
-    # THE 39.1 IS NOT COMPARABLE TO THE PREVIOUS CHECKPOINT'S 4.93, and the gap is not a
-    # regression. That run used mask_dice 1 + mask_bce 1 against a target with positive rate
-    # 4.7e-04; this one uses dice 20 + focal 1 against one at 3.8e-03. Different terms, different
-    # weights, different target density -- so a different sum. Compare them through results/,
-    # never through their losses. Val loss was still falling at the final checkpoint
-    # (42.8 -> 40.1 -> 39.1), so this model is step-limited rather than converged.
+    # THE PREVIOUS STORES ARE KEPT at .../eventstore_pu0/ (note: no _v2 suffix on the directory).
+    # They came from run 20260811-T121619 under mask_dice 20 + mask_focal 1, object_bce cost 0
+    # and a 3-cell floor. event_store.py will refuse to open them against this config, because
+    # particle_min_num_calohits is a contract key -- which is the check working.
+    #
+    # THE 1.85 IS NOT COMPARABLE TO THE PREVIOUS CHECKPOINT'S 39.1. That run weighted the mask
+    # loss dice 20 + focal 1; this one dice 1 + bce 1, roughly twenty times smaller in total, so
+    # the sums are on different scales and neither says anything about the other. Compare the two
+    # only through results/.
     #
     # The store's own metadata carries the truth definition, and it is in event_store.py's
     # CONTRACT_KEYS, so pointing this at a store dumped under the old definition fails loudly
     # instead of scoring one method's clusters against the other's truth.
-    store: /mnt/ai-datastore/finnbar/eventstore_pu0/ttbar_pu0_20250_20750_v2
+    store: /mnt/ai-datastore/finnbar/eventstore_pu0_v2/ttbar_pu0_20250_20750_v2
     # [20000, 20050) -- disjoint from the eval window, and where BOTH the MaskFormer working
     # point and CLUE's parameters are chosen, so neither is selected on the events it is scored
     # over. Note these 50 events WERE the training run's validation split, so they are unseen by
     # the optimiser but not by model selection. Same status as CLUE's tuning window.
-    tune_store: /mnt/ai-datastore/finnbar/eventstore_pu0/ttbar_pu0_20000_20050_v2
+    tune_store: /mnt/ai-datastore/finnbar/eventstore_pu0_v2/ttbar_pu0_20000_20050_v2
     windows:
       eval_start: 20250
       eval_events: 500
@@ -492,23 +495,19 @@ clue:
 maskformer:
   checkpoint: /home/finn/MSc_Thesis_SDIC/external/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260811-T121619/ckpts/epoch=002-val_loss=39.14410.ckpt
 
-  # RE-SCANNED 2026-08-12 on the tuning window under shower-level truth, by f1 -- the same
-  # criterion and the same window CLUE's Optuna search uses, so neither method picks its working
-  # point on the events it is scored over and neither picks it by a different rule.
+  # RE-SCANNED 2026-08-13 on the tuning window, by f1 -- the same criterion and the same window
+  # CLUE's Optuna search uses, so neither method picks its working point on the events it is
+  # scored over and neither picks it by a different rule.
   #
-  # Was 0.5 / 0.2, which was swept against the per-fragment truth. On this target that pair gives
-  # eff 0.685 / pur 0.409 / f1 0.512 with 310 clusters per event against 186 true targets --
-  # over-predicting the COUNT by 1.7x while getting the SIZE right (60.5 cells against a truth
-  # median of 57). Moving the object threshold alone fixes it: 0.15 / 0.5 gives
-  # eff 0.520 / pur 0.579 / f1 0.548 at 160 clusters.
+  #   run                                    best f1   eff     pur    clusters/ev (truth ~170)
+  #   2026-08-11 (dice 20+focal 1, cost 0)    0.548   0.520   0.579        160
+  #   2026-08-13 (dice 1+bce 1, cost 0.1)     0.710   0.677   0.746        147
   #
-  # THE OBJECT THRESHOLD IS DOING ALL THE WORK AND THAT IS THE INTERESTING PART. Across the whole
-  # mask_scan at object 0.5, f1 moves only 0.546-0.548 and mean cluster size 97 -> 92 cells. The
-  # mask probabilities are near-bimodal, so where the mask cut is put barely matters -- the head
-  # knows which cells belong. What it gets wrong is HOW MANY objects there are. That is the
-  # opposite of the pu200 barrel diagnosis ("the MASKS are the bottleneck", f1 flat at 0.338-0.359
-  # across the entire grid), and it is why the mask objective is NOT the thing to change here.
-  mask_threshold: 0.15
+  # THE MASK AXIS IS STILL FLAT and the object axis is not: at object 0.5, f1 moves only
+  # 0.7073-0.7099 across the entire mask_scan, while at mask 0.05 it moves 0.5175-0.7099 across
+  # the object range. The cell probabilities remain near-bimodal; how many objects there are is
+  # still the harder question, but it is now answered much better than it was.
+  mask_threshold: 0.05
   object_threshold: 0.5
   mask_scan: [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
   object_scan: [0.05, 0.1, 0.2, 0.3, 0.5]
