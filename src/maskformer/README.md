@@ -65,10 +65,37 @@ library for transformer-based reconstruction in HEP. I did not write it, and it 
 reproduced here — vendoring someone else's framework into a thesis repository would misstate
 authorship in the one direction that matters.
 
-| | |
+`hepattn` gained a ColliderML experiment upstream (commit `cb4fb10`, "Add ColliderML
+Experiment"), so this directory is a mixture rather than wholly mine. Checked file by file
+against that commit on 2026-08-13:
+
+| file | status |
 |---|---|
-| Mine | everything in this directory: the dataset, the model configuration, the evaluation dump, the store format, and `hepattn-changes.patch` |
-| Not mine | `hepattn` itself — the transformer encoder, the MaskFormer decoder, the task heads, the loss functions, the Hungarian matcher |
+| `configs/pu0.yaml`, `configs/pu200.yaml` | **mine** — not upstream |
+| `eval/dump.py`, `eval/format.py`, `eval/geometry.py` | **mine** — not upstream |
+| `data.py` | upstream file, **heavily modified by me** (889 lines differ): the shower-level truth collapse, the cell and particle selections, the calo association builders |
+| `model.py` | **upstream, unmodified** — byte-identical to `cb4fb10` |
+| `main.py` | **upstream, unmodified** — byte-identical to `cb4fb10` |
+| `hepattn-changes.patch` | **mine** — three modifications to the library proper |
+
+Not mine either way: `hepattn` itself — the transformer encoder, the MaskFormer decoder, the
+task heads, the loss functions and the Hungarian matcher.
+
+Verify any of the above with:
+
+```bash
+diff <(git -C <hepattn> show cb4fb10:src/hepattn/experiments/colliderml/model.py) \
+     hepattn_colliderml/model.py
+```
+
+**A known defect in the upstream `model.py`, left unfixed on purpose.** Its
+`log_custom_metrics` does `pred_hit_masks &= ...` and `true_hit_masks &= ...` on tensors it
+holds by reference, so it mutates the `preds` and `targets` dicts in place. It is harmless as
+the wrapper currently calls it — logging runs after `model.loss()` in both the training and
+validation steps, and the batch is discarded afterwards — but it is one reordering away from
+corrupting the truth masks during training. It is upstream's code, so the fix belongs upstream
+or in `hepattn-changes.patch`, not as a silent edit to a file this repository claims is a
+verbatim mirror.
 
 `hepattn-changes.patch` is the exception worth reading: three small modifications I made to
 the upstream library, kept as a patch rather than a copy so that what I changed is separable
