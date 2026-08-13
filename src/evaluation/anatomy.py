@@ -74,6 +74,7 @@ class ShowerCells:
     deposit: np.ndarray  # the particle's own energy in this cell, E_ia
     fate: np.ndarray  # 0 recovered, 1 stolen, 2 dropped
     p_energy: np.ndarray  # the particle's energy, repeated per cell
+    p_pt: np.ndarray  # the particle's transverse momentum, repeated per cell
 
 
 def shower_axes(record) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -130,6 +131,7 @@ def shower_cells(record, pred_label: np.ndarray, n_pred: int) -> ShowerCells:
         deposit=deposit[owned],
         fate=fate,
         p_energy=record.particle_energy[p],
+        p_pt=record.particle_pt[p],
     )
 
 
@@ -138,7 +140,9 @@ def profile(cells: ShowerCells, coord: str, edges: np.ndarray, energy_range: tup
     values = getattr(cells, coord)
     keep = np.ones(values.shape, dtype=bool)
     if energy_range is not None:
-        keep = (cells.p_energy >= energy_range[0]) & (cells.p_energy < energy_range[1])
+        # Selects on pT, matching the differential figures' binning variable (see thesis.PT_BINS_
+        # DIFFERENTIAL). The argument name is kept for compatibility with existing callers.
+        keep = (cells.p_pt >= energy_range[0]) & (cells.p_pt < energy_range[1])
     idx = np.digitize(values[keep], edges) - 1
     inside = (idx >= 0) & (idx < len(edges) - 1)
     idx, w, f = idx[inside], cells.deposit[keep][inside], cells.fate[keep][inside]

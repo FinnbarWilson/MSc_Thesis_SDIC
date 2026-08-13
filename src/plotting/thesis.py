@@ -63,8 +63,17 @@ REFERENCES = frozenset({"oracle_geometric", "oracle_resolution"})
 DATASETS: tuple[str, ...] = ("pu0", "pu200")
 DATASET_LABELS: Mapping[str, str] = {"pu0": "pileup 0", "pu200": "pileup 200"}
 
-#: Energy bins, shared by every differential figure so the panels line up with each other.
-E_BINS = np.array([0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 200.0])
+#: Transverse-momentum bins, shared by every differential figure so the panels line up.
+#:
+#: pT RATHER THAN ENERGY, changed 2026-08-13, and the reason is not only that the comparison
+#: literature plots pT. On this sample the two axes disagree about the shape: median E/pT is 1.75
+#: and 10.9% of targets sit beyond |eta| = 2.44, so binning by ENERGY mixes "energetic" with
+#: "forward" and produces a high-energy fall that is partly geometry. Binned by pT the same
+#: efficiency curve dips and recovers (0.590 -> 0.682 in the top bin) instead of falling away.
+#: Energy remains the metric WEIGHT -- eff_e and pur_e are unchanged; only the binning variable
+#: moved.
+PT_BINS_DIFFERENTIAL = np.array([0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 200.0])
+E_BINS = PT_BINS_DIFFERENTIAL
 
 #: Jet bins start at the 25 GeV analysis threshold -- below it there are no jets to bin -- and run
 #: to where a ttbar event stops producing them.

@@ -121,6 +121,7 @@ def build_anatomy(dataset: str, cfg, n_events: int) -> pd.DataFrame:
                 rows.append({
                     "dataset": dataset, "algo": method, "sample_id": record.sample_id, "particle_row": p,
                     "p_energy": float(record.particle_energy[p]),
+                    "p_pt": float(record.particle_pt[p]),
                     "n_true": int(truth_cells[p]),
                     "n_recovered": int(rec.sum()),
                     "n_matched_cluster": int(shape["n_cells"][c]) if c >= 0 else 0,
@@ -158,7 +159,7 @@ def load_profiles(dataset: str, cfg, n_events: int):
             label, n = _labels(record, method, cfg, clue_params)
             per[method].append(an.shower_cells(record, label, n))
     return {m: an.ShowerCells(**{f: np.concatenate([getattr(c, f) for c in per[m]])
-                                 for f in ("particle", "dr", "depth", "subsystem", "deposit", "fate", "p_energy")})
+                                 for f in ("particle", "dr", "depth", "subsystem", "deposit", "fate", "p_energy", "p_pt")})
             for m in METHODS}
 
 
@@ -192,7 +193,7 @@ def fig_eff_purity(tables, datasets, out):
             p = parts[parts.algo == algo]
             if p.empty:
                 continue
-            x, y, lo, hi = th.binned_proportion(p.p_energy.to_numpy(), (p.eff_e >= 0.5).to_numpy(), th.E_BINS)
+            x, y, lo, hi = th.binned_proportion(p.p_pt.to_numpy(), (p.eff_e >= 0.5).to_numpy(), th.E_BINS)
             th.band(axes[0][j], algo, x, lo, hi)
             th.draw(axes[0][j], algo, x, y)
             # Purity is a per-CLUSTER quantity, but it is binned by the energy of the particle
@@ -201,13 +202,13 @@ def fig_eff_purity(tables, datasets, out):
             # single "particle energy" label is exactly the ambiguity these figures exist to
             # remove -- and it silently made the two rows non-comparable.
             c = clus[(clus.algo == algo) & (clus.particle_row >= 0)].merge(
-                p[["sample_id", "particle_row", "p_energy"]], on=["sample_id", "particle_row"], how="inner")
+                p[["sample_id", "particle_row", "p_pt"]], on=["sample_id", "particle_row"], how="inner")
             if c.empty:
                 continue
-            x, y, lo, hi = th.binned_proportion(c.p_energy.to_numpy(), (c.pur_e >= 0.5).to_numpy(), th.E_BINS)
+            x, y, lo, hi = th.binned_proportion(c.p_pt.to_numpy(), (c.pur_e >= 0.5).to_numpy(), th.E_BINS)
             th.band(axes[1][j], algo, x, lo, hi)
             th.draw(axes[1][j], algo, x, y)
-        axes[1][j].set_xlabel("particle energy [GeV]")
+        axes[1][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
         for ax in (axes[0][j], axes[1][j]):
             ax.set_xscale("log")
             ax.set_ylim(0, 1.02)
@@ -236,13 +237,13 @@ def fig_cluster_size(anat, datasets, out):
             s = a[a.algo == algo]
             if s.empty:
                 continue
-            x, y, lo, hi = th.binned_ratio(s.p_energy.to_numpy(), s.n_recovered.to_numpy(),
+            x, y, lo, hi = th.binned_ratio(s.p_pt.to_numpy(), s.n_recovered.to_numpy(),
                                            s.n_true.to_numpy(), s.sample_id.to_numpy(), th.E_BINS)
             th.band(axes[0][j], algo, x, lo, hi)
             th.draw(axes[0][j], algo, x, y)
         axes[0][j].set_xscale("log")
         axes[0][j].set_ylim(0, 0.65)
-        axes[0][j].set_xlabel("particle energy [GeV]")
+        axes[0][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
     axes[0][0].set_ylabel("fraction of the shower's cells\ncorrectly assigned")
     return th.finish(fig, out, ncol=len(METHODS))
 
@@ -277,7 +278,7 @@ def fig_response(tables, datasets, out):
             p = parts[(parts.algo == algo) & np.isfinite(parts.response) & (parts.response > 0)]
             if p.empty:
                 continue
-            e, r, ev = p.p_energy.to_numpy(), p.response.to_numpy(), p.sample_id.to_numpy()
+            e, r, ev = p.p_pt.to_numpy(), p.response.to_numpy(), p.sample_id.to_numpy()
             x, med, lo, hi = th.binned_bootstrap(e, r, ev, th.E_BINS, "median")
             th.band(axes[0][j], algo, x, lo, hi)
             th.draw(axes[0][j], algo, x, med)
@@ -290,7 +291,7 @@ def fig_response(tables, datasets, out):
         axes[1][j].set_yticks([0.5, 1, 2, 5])
         axes[1][j].set_yticklabels(["0.5", "1", "2", "5"])
         axes[1][j].minorticks_off()
-        axes[1][j].set_xlabel("true particle energy [GeV]")
+        axes[1][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
         for ax in (axes[0][j], axes[1][j]):
             ax.set_xscale("log")
     axes[0][0].set_ylabel("median $E_{\\rm reco}/E_{\\rm true}$")

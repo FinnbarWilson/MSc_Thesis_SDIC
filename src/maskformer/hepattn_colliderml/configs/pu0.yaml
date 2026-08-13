@@ -89,19 +89,29 @@ data:
   return_tracks: false
 
 trainer:
-  # 3. SIZED FROM A MEASUREMENT ON THIS BOX, not from the DIAS arithmetic this file used to
-  # carry. A clean training-only benchmark of this configuration measured 0.70 it/s on ce-ai-1,
-  # and the completed 2026-08-11 run did 20,000 steps per epoch at ~0.85 it/s: 3 epochs is 60,000
-  # optimiser steps in ~21 h. Seven would be ~50 h.
+  # 6, was 3, doubling the schedule to 120,000 optimiser steps. The 3-epoch run measured 12 h on
+  # this box, so this is ~24 h.
   #
-  # 60,000 steps is 3x the ~20,000 at which this model was diagnosed as step-starved, but it is
-  # NOT convergence: that run's validation loss was still falling at its final checkpoint
-  # (42.8 -> 40.1 -> 39.1). If there is GPU budget, more epochs is the single best use of it.
+  # WHY NOT RESUME THE 3-EPOCH RUN INSTEAD. OneCycleLR is constructed with
+  # `total_steps=trainer.estimated_stepping_batches`, so 60,000 is baked into the checkpoint's
+  # scheduler state. Restoring it under a longer schedule fails with "Tried to step 60001 times.
+  # The specified number of total steps is 60000". A resume would also restart from a learning
+  # rate that has already decayed to `end`, i.e. 1e-6, which is not training. The schedule has to
+  # be sized once, up front, for the whole run.
   #
-  # RESIZE THIS AND lrs_config TOGETHER. OneCycleLR is sized from total steps, so a run that
-  # overruns its walltime never reaches its decay phase and its final checkpoint is taken at a
-  # high learning rate.
-  max_epochs: 3
+  # THE EVIDENCE THAT MORE STEPS IS THE RIGHT PLACE TO SPEND TIME: the 3-epoch run's validation
+  # loss was still falling at its final checkpoint, and overlay_long_schedule (deleted; see git
+  # history) recorded that this model is step-starved rather than data-starved -- two runs at
+  # ~20,000 steps reached nearly the same loss despite 6.7x different data volumes.
+  #
+  # THIS IS SIX PASSES OVER THE SAME 20,000 EVENTS, not more data, and that is forced rather than
+  # chosen: `val_start_event` is 20000, so num_train cannot grow without moving the validation and
+  # test windows and invalidating every stored result and CLUE tune that sits on them. If
+  # overfitting appears -- validation loss turning up while training loss falls -- the fix is to
+  # move all three windows outwards into the unused events [20750, 100000), not to shorten this.
+  #
+  # RESIZE THIS AND lrs_config TOGETHER.
+  max_epochs: 6
   # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
   # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
   # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
