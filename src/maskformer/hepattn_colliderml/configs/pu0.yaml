@@ -44,11 +44,10 @@ data:
   # --cpus-per-task and num_workers, not this.
   #
   # MEMORY, measured on ce-ai-1 at 400 queries: batch 1 peaks at 12.5 GB, batch 4 at ~34 GB
-  # (roughly 5 GB fixed plus 7 GB per event in the batch). That fits an 80 GB card comfortably and
-  # is marginal on a 40 GB one -- and the DIAS docs say 40 GB while a 2026-08-05 measurement on the
-  # node recorded 81.9 GB. The launcher prints memory.total in its preflight; check the log.
-  # Events also vary a lot (pu0 cells/event: ~22k mean, 62k max), so the peak is set by the largest
-  # event in a batch rather than the mean.
+  # (roughly 5 GB fixed plus 7 GB per event in the batch). Both DIAS and ce-ai-1 have 80 GB A100s
+  # (confirmed on the DIAS node 2026-08-13; its docs saying 40 GB are out of date), so batch 4 fits
+  # with room. Events vary a lot though -- pu0 cells/event is ~22k mean against a 62k max -- and the
+  # peak is set by the largest event in a batch, not the mean.
   batch_size: 4
   input_sort_field: phi
   # 24. This box has 104 cores, so the workers are not competing for them. row_group_cache_size

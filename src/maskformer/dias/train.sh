@@ -57,10 +57,8 @@
 #    env.sh's select_gpu reads Slurm's own variables instead. One card had climbing uncorrected ECC
 #    errors; that is why two are requested.
 #
-#    ALSO CHECK THE CARD SIZE. The cluster docs say the GPU partition has 40 GB A100s, but the
-#    2026-08-05 measurement above recorded a 81.9 GB total on the card it ran on. One of the two is
-#    out of date. The preflight prints memory.total -- read it in the log before trusting any
-#    batch-size arithmetic, because 40 GB and 80 GB give different answers.
+#    CARD SIZE, CONFIRMED 2026-08-13 on the node: three x "NVIDIA A100 80GB PCIe, 81920 MiB".
+#    The cluster docs saying 40 GB are out of date. Batch 4 peaks at ~34 GB, so it fits with room.
 #
 # 3. --mem IS NOT ENFORCED. This cluster runs TaskPlugin=task/affinity with no cgroups, so --mem is
 #    used for SCHEDULING only -- job 48169 booked 128 GB, used 185 GB, and finished. Under-requesting
@@ -101,6 +99,7 @@
 #   MAX_TIME=00:23:00:00        --trainer.max_time     D:HH:MM:SS, Lightning's format
 #   CKPT=<path>/last.ckpt       --ckpt_path            resume
 #   OUT_DIR=<path>              --trainer.default_root_dir
+#   DATA_DIR=<path>             where ttbar_<dataset>/ lives  (default ~/ColliderML_data)
 #   SYNC=0                      skip re-copying this repo's files into the checkout
 #   ALLOW_FAULTY_GPU=1          run even on a card reporting uncorrected ECC errors
 set -uo pipefail
@@ -135,6 +134,13 @@ if [ "$DATASET" = "pu200" ]; then
 fi
 
 ARGS=(--config "$CONFIG" --data.pin_memory false --trainer.devices 1)
+
+# THE DATA DIRECTORIES ARE OVERRIDDEN HERE, NOT READ FROM THE CONFIG. configs/pu0.yaml points at
+# ce-ai-1's datastore (/mnt/ai-datastore/...), which does not exist on DIAS -- without this the job
+# dies on the first read. Overriding rather than editing the config keeps one file valid on both
+# machines, which is the same reason the ce-ai-1 overlay used to exist.
+SHARDS="$DATA_DIR/ttbar_${DATASET}/"
+ARGS+=(--data.train_dir "$SHARDS" --data.val_dir "$SHARDS" --data.test_dir "$SHARDS")
 [ -n "${NUM_TRAIN:-}" ]  && ARGS+=(--data.num_train    "$NUM_TRAIN")
 [ -n "${MAX_EPOCHS:-}" ] && ARGS+=(--trainer.max_epochs "$MAX_EPOCHS")
 [ -n "${BATCH_SIZE:-}" ] && ARGS+=(--data.batch_size   "$BATCH_SIZE")
