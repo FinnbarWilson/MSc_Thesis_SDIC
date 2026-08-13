@@ -36,6 +36,10 @@ data:
   dataset_prefix: ttbar_pu200
   calo_only: true
 
+  # 1, and PU0 DIFFERS (4) -- this is a data-forced difference, not an oversight. MaskFormer's
+  # memory is driven by queries x cells: pu0 is 400 x ~22,000 = 8.8M per event, pu200 is
+  # 1600 x ~117,000 = 187M, twenty-one times larger. A pu200 batch of 1 was already measured at
+  # 68 GB peak of 81.9 on this card. Batch 4 does not fit on any card in either cluster.
   batch_size: 1
   input_sort_field: phi
   # 24 workers at a row_group_cache_size of 3, and THE TWO MUST MOVE TOGETHER. A decoded pu200

@@ -30,7 +30,26 @@ data:
   dataset_prefix: ttbar_pu0
   calo_only: true
 
-  batch_size: 1
+  # 4, was 1. RAISED FOR DIAS, and the trade is not free -- read this before changing it back.
+  #
+  # STEPS = num_train x max_epochs / batch_size. At batch 4 the same 20,000 events x 6 epochs is
+  # 30,000 optimiser steps, not 120,000. This model is step-starved (validation loss was still
+  # falling at the end of every run so far), so a bigger batch only pays if the gradient it buys is
+  # worth four times fewer updates, or if max_epochs rises to compensate.
+  #
+  # AND ON DIAS IT MAY BUY NOTHING AT ALL. That job was measured INPUT-bound -- 30% GPU utilisation
+  # at 32 CPUs / 24 workers, 16% at 12 CPUs. When the dataloader is the ceiling, raising the batch
+  # does not raise events/second; it just divides the step count. Measure GPU utilisation over the
+  # first few hundred steps before trusting this value; if it is still low, the lever is
+  # --cpus-per-task and num_workers, not this.
+  #
+  # MEMORY, measured on ce-ai-1 at 400 queries: batch 1 peaks at 12.5 GB, batch 4 at ~34 GB
+  # (roughly 5 GB fixed plus 7 GB per event in the batch). That fits an 80 GB card comfortably and
+  # is marginal on a 40 GB one -- and the DIAS docs say 40 GB while a 2026-08-05 measurement on the
+  # node recorded 81.9 GB. The launcher prints memory.total in its preflight; check the log.
+  # Events also vary a lot (pu0 cells/event: ~22k mean, 62k max), so the peak is set by the largest
+  # event in a batch rather than the mean.
+  batch_size: 4
   input_sort_field: phi
   # 24. This box has 104 cores, so the workers are not competing for them. row_group_cache_size
   # stays at data.py's default of 8: a pu0 shard is ~790 MB on disk against pu200's ~2.9 GB.
@@ -89,29 +108,30 @@ data:
   return_tracks: false
 
 trainer:
-  # 6, was 3, doubling the schedule to 120,000 optimiser steps. The 3-epoch run measured 12 h on
-  # this box, so this is ~24 h.
+  # 12, giving 20,000 x 12 / 4 = 60,000 optimiser steps. This number and batch_size are coupled and
+  # must be read together:
   #
-  # WHY NOT RESUME THE 3-EPOCH RUN INSTEAD. OneCycleLR is constructed with
-  # `total_steps=trainer.estimated_stepping_batches`, so 60,000 is baked into the checkpoint's
-  # scheduler state. Restoring it under a longer schedule fails with "Tried to step 60001 times.
-  # The specified number of total steps is 60000". A resume would also restart from a learning
-  # rate that has already decayed to `end`, i.e. 1e-6, which is not training. The schedule has to
-  # be sized once, up front, for the whole run.
+  #   steps = num_train x max_epochs / batch_size
   #
-  # THE EVIDENCE THAT MORE STEPS IS THE RIGHT PLACE TO SPEND TIME: the 3-epoch run's validation
-  # loss was still falling at its final checkpoint, and overlay_long_schedule (deleted; see git
-  # history) recorded that this model is step-starved rather than data-starved -- two runs at
-  # ~20,000 steps reached nearly the same loss despite 6.7x different data volumes.
+  #   batch 1, 6 epochs   = 120,000 steps   (the ce-ai-1 run)
+  #   batch 4, 6 epochs   =  30,000 steps   <- what raising the batch alone would have cost
+  #   batch 4, 12 epochs  =  60,000 steps   <- this
+  #   batch 4, 24 epochs  = 120,000 steps   <- ~69 h at the measured DIAS rate, over the 2-day cap
   #
-  # THIS IS SIX PASSES OVER THE SAME 20,000 EVENTS, not more data, and that is forced rather than
-  # chosen: `val_start_event` is 20000, so num_train cannot grow without moving the validation and
-  # test windows and invalidating every stored result and CLUE tune that sits on them. If
-  # overfitting appears -- validation loss turning up while training loss falls -- the fix is to
-  # move all three windows outwards into the unused events [20750, 100000), not to shorten this.
+  # So on DIAS, at batch 4, the 120,000 steps the previous run had are NOT reachable inside the
+  # partition's maximum walltime. 60,000 is the compromise; the alternative is batch 1, where the
+  # same walltime buys four times the steps.
   #
-  # RESIZE THIS AND lrs_config TOGETHER.
-  max_epochs: 6
+  # WALLTIME. At the measured 1.94 events/s (32 CPUs / 24 workers, 2026-08-05) this is
+  # 20,000 x 12 / 1.94 = 34.4 h, so dias/train.sh asks for 36 h and stops Lightning cleanly an hour
+  # early. THAT RATE IS FROM A DIFFERENT CONFIGURATION -- 1000 queries against this file's 400, and
+  # before the dataloader got faster -- so re-measure over ~300 steps and resize BOTH this and the
+  # SBATCH --time before committing a two-day run.
+  #
+  # OneCycleLR is sized from total steps and cannot be resized mid-run, so a schedule that overruns
+  # its walltime never reaches its decay phase and its final checkpoint sits at a high learning
+  # rate. Undershooting the wall costs nothing; overshooting costs the run.
+  max_epochs: 12
   # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
   # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
   # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
@@ -179,7 +199,11 @@ model:
     # starting point for this setup. The earlier finding that "1e-4 thrashed and 1.5e-4 diverged at
     # batch 1" was measured under LION at batch 1 and does NOT transfer to AdamW.
     # If 1e-4 turns out to underfit, 5e-4 is the next value to try.
-    max: 1e-4
+    # 2e-4 AT BATCH 4, was 1e-4 at batch 1: the square-root scaling of the batch change. A larger
+    # batch gives a less noisy gradient, which supports a proportionally larger step; sqrt rather
+    # than linear because linear scaling is the aggressive end and this has not been swept here.
+    # IF batch_size GOES BACK TO 1, PUT THIS BACK TO 1e-4 -- they were set together.
+    max: 2e-4
     end: 1e-6
     # Unchanged at 0.01, but it now means something different and the new meaning is better.
     # OneCycleLR is sized from TOTAL optimiser steps, and dropping accumulation multiplied those by
