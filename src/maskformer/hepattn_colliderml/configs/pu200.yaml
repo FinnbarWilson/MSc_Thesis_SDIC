@@ -115,19 +115,38 @@ data:
   return_tracks: false
 
 trainer:
-  # 3. SIZED FROM A MEASUREMENT ON THIS BOX, not from the DIAS arithmetic this file used to
-  # carry. A clean training-only benchmark of this configuration measured 0.70 it/s on ce-ai-1,
-  # and the completed 2026-08-11 run did 20,000 steps per epoch at ~0.85 it/s: 3 epochs is 60,000
-  # optimiser steps in ~21 h. Seven would be ~50 h.
+  # 4 epochs x 6,000 events at batch 1 = 24,000 optimiser steps, ~30 h.
   #
-  # 60,000 steps is 3x the ~20,000 at which this model was diagnosed as step-starved, but it is
-  # NOT convergence: that run's validation loss was still falling at its final checkpoint
-  # (42.8 -> 40.1 -> 39.1). If there is GPU budget, more epochs is the single best use of it.
+  # SIZED FROM A PU200 MEASUREMENT, 2026-08-13. The block that used to sit here was pu0's,
+  # inherited when this file was split off it, and quoted 20,000 steps per epoch -- meaningless
+  # here, where an epoch is 6,000 events. A 150-step probe of this exact configuration on ce-ai-1
+  # settled at 0.22 it/s, i.e. 4.5 s per step and 7.6 h per epoch. The rate FELL from 0.43 to 0.22
+  # over those 150 steps as the row-group cache moved off its first shard, so 0.22 is the steady
+  # state and the opening number is not to be trusted.
+  #
+  # WHERE THE TIME GOES, measured at the same moment: 16 of 104 cores busy, 758 GB RAM free,
+  # 39.5 GB of 80 GB GPU memory used. Neither input-bound nor memory-bound -- GPU-bound on the mask
+  # cost and loss, a [queries x particles x cells] = 1600 x 1600 x 117,000 tensor built at EVERY
+  # decoder layer. That is ~3e11 multiply-adds per layer and four layers per step, which is ~4 s of
+  # A100 bf16 and accounts for essentially the whole 4.5 s.
+  #
+  # SO MORE WORKERS WILL NOT HELP. The DIAS measurement that made the old pu200 job input-bound was
+  # a different configuration and does not transfer; this one leaves 88 cores idle.
+  #
+  # THE LEVER IF THIS IS TOO SLOW is `has_intermediate_loss: false` on the mask task, which is true
+  # by default and is why that tensor is built four times rather than once. hepattn's own CLD
+  # experiment sets it False on every task, and at pu0 the equivalent saving was measured at 2.6x
+  # (0.79 -> 2.06 it/s cutting decoder layers 4 -> 1). NOT applied here: it changes the objective,
+  # and this run is meant to be pu0's configuration at a different pileup.
+  #
+  # 24,000 steps is well short of pu0's 60,000-120,000, and that is a constraint rather than a
+  # choice -- only 6,000 events can be trained on before the window runs into the CLUE stores, and
+  # each step costs 4.5 s. State it as a limitation when reporting.
   #
   # RESIZE THIS AND lrs_config TOGETHER. OneCycleLR is sized from total steps, so a run that
   # overruns its walltime never reaches its decay phase and its final checkpoint is taken at a
   # high learning rate.
-  max_epochs: 3
+  max_epochs: 4
   # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
   # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
   # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
