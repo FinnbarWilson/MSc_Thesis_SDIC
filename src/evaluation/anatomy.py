@@ -75,6 +75,11 @@ class ShowerCells:
     fate: np.ndarray  # 0 recovered, 1 stolen, 2 dropped
     p_energy: np.ndarray  # the particle's energy, repeated per cell
     p_pt: np.ndarray  # the particle's transverse momentum, repeated per cell
+    # Which event each pair came from, repeated per cell. Optional because `shower_cells` builds
+    # one event at a time and has no opinion about what that event is called; the caller that
+    # concatenates events fills it in. Without it the shower profiles can be drawn but not given
+    # an uncertainty, since the resampling unit for everything else in this analysis is the event.
+    event: np.ndarray | None = None
 
 
 def shower_axes(record) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

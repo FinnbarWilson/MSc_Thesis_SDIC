@@ -140,7 +140,22 @@ def main() -> None:
                 f"Re-dump or fix the config."
             )
 
-        paragraph = figures.definitions_paragraph(meta, cfg["metrics"])
+        # The working point is a SCORING decision and the paragraph must quote the one scoring
+        # used. The store's `nominal_*` fields are the dump's defaults; they read 0.5/0.2 here
+        # while scoring runs at 0.05/0.5, and the paragraph quoted the store until this check
+        # existed. What the store IS authoritative about is its probability floor: no threshold
+        # below `store_mask_threshold` is recoverable offline, so a config below it is a real
+        # error rather than a documentation one.
+        store_floor = meta["maskformer"].get("store_mask_threshold")
+        if store_floor is not None and cfg["maskformer"]["mask_threshold"] < store_floor:
+            print(
+                f"\n  ! config mask_threshold {cfg['maskformer']['mask_threshold']:g} is BELOW the "
+                f"store's probability floor {store_floor:g}.\n"
+                f"    Cells between the two were never written, so this working point is not "
+                f"reachable from this store."
+            )
+
+        paragraph = figures.definitions_paragraph(meta, cfg["metrics"], cfg["maskformer"])
         (results / "definitions.txt").write_text(paragraph + "\n")
         print("\n" + paragraph)
     else:

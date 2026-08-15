@@ -47,6 +47,63 @@ external/conda-envs/calo-clustering/bin/python -m scripts.make_figures
 For the pileup-200 run, continue at
 [`src/maskformer/ce_ai_1/README.md`](../src/maskformer/ce_ai_1/README.md).
 
+## Two clusters, and what has to change on DIAS
+
+pu0 is trained and scored on **DIAS**, pu200 on **ce-ai-1**, and the thesis figures put them side by
+side — so whichever machine draws them needs both columns. Three things differ on DIAS, and all
+three are consequences of it being a shared RHEL7 cluster rather than a box you own.
+
+**Everything runs inside a container.** DIAS is RHEL7 with glibc 2.17; hepattn needs 2.28+, and so
+do the pinned conda-forge builds in `environment.yml` (numpy 2.4.6, pandas 3.0.3). Both
+environments are therefore built *and* run inside `~/ubuntu22.sif`, including the analysis env:
+
+```bash
+apptainer build ~/ubuntu22.sif docker://ubuntu:22.04
+apptainer exec --bind $HOME ~/ubuntu22.sif bash setup/install_analysis_env.sh
+```
+
+The image is the bare `ubuntu:22.04` base and ships no compiler and no `curl`. `dias/env.sh` points
+`CC`/`CXX` at the pixi env's conda-forge GCC — without it Triton cannot initialise its driver and
+training dies at the first kernel — and `install_analysis_env.sh` falls back to wget or python for
+the miniforge download.
+
+**The store lives somewhere else.** `config/experiment.yaml` holds ce-ai-1's `/mnt/ai-datastore`
+paths. `CALO_STORE_ROOT` relocates them without editing the config, so one config stays valid on
+both machines. Only the directory moves — the store *name* still comes from the config, because it
+encodes the window and format version `EventStore` checks:
+
+```bash
+export CALO_STORE_ROOT=$HOME/eventstores     # put this in ~/.bashrc on DIAS
+```
+
+**Slurm, not `nohup`.** The launchers live in [`src/maskformer/dias/`](../src/maskformer/dias/):
+
+```bash
+sbatch src/maskformer/dias/train.sh                                  # pu0 is the default
+CKPT=<ckpt> sbatch src/maskformer/dias/dump_store.sh pu0 tune
+CKPT=<ckpt> sbatch src/maskformer/dias/dump_store.sh pu0 eval
+sbatch src/maskformer/dias/analysis.sh                               # tune, scan, score, figures
+```
+
+`analysis.sh` runs on the CPU `COMPUTE` partition and is the DIAS counterpart to
+`scripts/run_pu200_pipeline.sh`. Both `--mem` values look absurd for the work being done and are
+not negotiable: Slurm here applies `VSizeFactor`, so `--mem` is a hard *virtual* memory cap of
+1.1 × the request, and `expandable_segments` reserves a large virtual range at start-up. An
+under-request surfaces as `CUDA driver error: out of memory` on an idle 80 GB card.
+
+### Getting both columns into one figure
+
+The per-row tables never move. `results/<ds>/particles_*.parquet` and `clusters_*.parquet` are
+~200 MB at pu0 and several times that at pu200, `.gitignore` excludes them, and no per-row table
+has ever been in this repository's history. What travels is
+**`results/<ds>/figure_summary.csv`** — the binned series the five thesis figures draw, ~20 KB,
+written by `scripts.make_thesis_figures` and meant to be committed.
+
+So the round trip is just git: score pu0 on DIAS, commit its summary, push; pull on ce-ai-1, score
+pu200 there, and `make_thesis_figures` draws both columns from the two CSVs. A machine holding the
+per-row tables always rebuilds its own summary rather than trusting the committed one, so a rescore
+cannot be silently plotted over.
+
 ## `verify_data.py` is not a formality
 
 `ColliderMLDataset` pairs a particles shard with the calo_hits shard of the **same filename** and

@@ -1,0 +1,2 @@
+events,assoc_total,cells_owned,cells_shared_frac,assoc_kept_frac,energy_kept_frac,targets,spanning_frac,spanning_energy_frac,minority_energy_frac,coverage_frac,targets_in_1_subsystems,targets_in_2_subsystems,targets_in_3_subsystems,targets_in_4_subsystems
+500,9848881,9056574,0.0648982,0.919554,0.949547,85868,0.493991,0.704281,0.097464,0.880671,43450,35839,5204,1375

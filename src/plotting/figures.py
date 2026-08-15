@@ -471,14 +471,33 @@ def incidence_head_comparison(particles, clusters, working_point=0.5, out=None):
     return _finish(fig, out)
 
 
-def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
+def definitions_paragraph(
+    meta: Mapping, metrics: Mapping | None = None, maskformer: Mapping | None = None
+) -> str:
     """Deliverable 7, generated from the store's own metadata so it cannot go stale.
+
+    WHAT THE STORE CAN AND CANNOT TELL YOU. Everything about which cells and which particles
+    exist is a property of the dump and is read from ``meta``. The WORKING POINT is not: the
+    store keeps mask probabilities down to its own floor (``store_mask_threshold``, 0.02 here)
+    and the thresholds that turn them into clusters are applied at scoring time from
+    ``config/experiment.yaml``. ``meta['maskformer']['nominal_*_threshold']`` records the values
+    the DUMP was configured with, which is a different thing and drifts the moment the working
+    point is re-scanned.
+
+    That drift is exactly what happened: the paragraph reported mask 0.5 / object 0.2 -- the
+    dump-time defaults -- while every scored number came from mask 0.05 / object 0.5. The two
+    are not interchangeable; `wp_scan.parquet` has MaskFormer at eff 0.764 / pur 0.609 for the
+    former against 0.712 / 0.782 for the latter. So the thresholds now come from `maskformer`,
+    the config block that scoring actually reads, and the store's values are used only to warn.
 
     Args:
         meta: the store's ``meta.json``.
         metrics: the config's ``metrics`` block. The match floor and the split weighting are
             this repository's choices rather than the store's, so they are not in the store's
             metadata and have to be passed in to be stated.
+        maskformer: the config's ``maskformer`` block, the authority on the working point.
+            Falls back to the store's dump-time values when absent, which is wrong often
+            enough that callers should always pass it.
     """
     hits = meta["hit_selection"]
     parts = meta["particle_selection"]
@@ -492,6 +511,11 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
     mf = meta["maskformer"]
     layers = meta["detector"].get("layer_centres_m", {})
     calib = meta["detector"]["subsystem_calibration"]
+
+    # The working point comes from the config that scoring reads, NOT from the dump-time
+    # defaults in the store -- see this function's docstring for why they diverged.
+    wp_mask = (maskformer or {}).get("mask_threshold", mf["nominal_mask_threshold"])
+    wp_object = (maskformer or {}).get("object_threshold", mf["nominal_object_threshold"])
 
     # Which head resolved a contested cell is a decision the reader cannot infer from anything
     # else in the paragraph, and before format 2 there was no choice to state. Silence here
@@ -516,11 +540,14 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
             f"it. Splitting and merging use a {metrics['split_fraction']:g} threshold applied to "
             f"calibrated energy rather than to cell counts. Uncertainties on fractions come from "
             f"resampling events rather than particles, since particles within an event are not "
-            f"independent. Reported figures carry two reference clusterings: a geometric ceiling, in "
-            f"which an idealised method given the true particle count and shower axes assigns each "
-            f"cell to the nearest axis in angle and depth at the best of a scanned range of depth "
-            f"weightings; and a resolution ceiling, in which target particles sharing more than half "
-            f"of the smaller one's energy are merged and then clustered perfectly."
+            f"independent. Two reference clusterings are QUOTED AS BOUNDS rather than drawn: a "
+            f"resolution ceiling, in which target particles sharing more than half of the smaller "
+            f"one's energy are merged and then clustered perfectly, which bounds what these cells "
+            f"can support; and a geometric ceiling, in which an idealised method given the true "
+            f"particle count and shower axes assigns each cell to the nearest axis in angle and "
+            f"depth at the best of a scanned range of depth weightings. Only the first is a bound "
+            f"-- the second is one specific assignment rule that methods here exceed elsewhere, and "
+            f"is reported as a characterisation of nearest-axis assignment rather than as a limit."
         )
 
     return (
@@ -535,8 +562,8 @@ def definitions_paragraph(meta: Mapping, metrics: Mapping | None = None) -> str:
         f"clusters as fakes. Cell energies are calibrated per subsystem "
         f"({', '.join(f'{k} {v}' for k, v in calib.items())}). Layer indices come from a frozen geometry of "
         f"{', '.join(f'{k} {len(v)}' for k, v in layers.items())} layers. MaskFormer results use checkpoint "
-        f"{str(mf['checkpoint']).rsplit('/', 1)[-1]} at mask threshold {mf['nominal_mask_threshold']} and object "
-        f"threshold {mf['nominal_object_threshold']}; it was trained on events "
+        f"{str(mf['checkpoint']).rsplit('/', 1)[-1]} at mask threshold {wp_mask:g} and object "
+        f"threshold {wp_object:g}; it was trained on events "
         f"{mf['trained_event_window']}, disjoint from those reported here." + heads + scoring
     )
 

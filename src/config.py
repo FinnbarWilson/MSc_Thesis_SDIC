@@ -29,6 +29,7 @@ between the two is stated once in the block that owns it rather than being remem
 implicit merge that nothing shows you is how the wrong number gets reported.
 """
 
+import os
 from copy import deepcopy
 from pathlib import Path
 from types import MappingProxyType
@@ -124,6 +125,16 @@ def active_dataset() -> str:
 def store_path(kind: str = "store") -> Path:
     """Path to the event store for the active dataset.
 
+    The path in the config is ce-ai-1's, under /mnt/ai-datastore. ``CALO_STORE_ROOT``
+    relocates it without editing the config, which is what lets one config stay valid on
+    two machines -- the same reason ``src/maskformer/dias/train.sh`` overrides the data
+    directories rather than rewriting ``configs/pu0.yaml``.
+
+    Only the DIRECTORY moves; the store's NAME is taken from the config unchanged, because
+    ``eval/dump.py`` builds it as ``<prefix>_<start>_<end>_v<FORMAT_VERSION>`` and that name
+    is the contract :class:`~src.io.event_store.EventStore` checks. Relocating a store must
+    not be able to change which window or format version is being opened.
+
     Args:
         kind: ``"store"`` for the evaluation window, ``"tune_store"`` for the smaller
             window CLUE's parameter search runs on.
@@ -136,7 +147,11 @@ def store_path(kind: str = "store") -> Path:
             f"hepattn.experiments.colliderml.eval.dump and point this at it."
         )
         raise ValueError(msg)
-    return Path(entry[kind])
+    configured = Path(entry[kind])
+    root = os.environ.get("CALO_STORE_ROOT")
+    if root:
+        return Path(root) / configured.name
+    return configured
 
 
 def window(kind: str = "eval") -> tuple[int, int]:
@@ -225,9 +240,20 @@ def describe() -> str:
     if replaced:
         lines.append(f"  overrides    {', '.join(replaced)}")
 
+    # The RESOLVED path, not the configured one, and they differ whenever CALO_STORE_ROOT is set.
+    # This function exists precisely so an invisible substitution cannot change reported numbers
+    # unseen, so printing the config's own string here would defeat it: show_config is the first
+    # thing run when a path looks wrong, and it would have confirmed a path nothing was reading.
     entry = settings()["dataset"][active]
+    root = os.environ.get("CALO_STORE_ROOT")
+    if root:
+        lines.append(f"  store root   {root}  (CALO_STORE_ROOT; names come from the config)")
     for kind in ("store", "tune_store"):
-        lines.append(f"  {kind:<12} {entry.get(kind) or '(unset)'}")
+        if not entry.get(kind):
+            lines.append(f"  {kind:<12} (unset)")
+            continue
+        resolved = store_path(kind)
+        lines.append(f"  {kind:<12} {resolved}{'' if not root else '   [relocated]'}")
     return "\n".join(lines)
 
 

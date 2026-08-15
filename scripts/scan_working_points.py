@@ -55,6 +55,11 @@ def summarise(particles, clusters, algo, wp, **extra) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--events", type=int, default=100)
+    # SELECTING a working point must happen on the tune window, not on the scored one. The scan
+    # defaults to the scored store because its usual job is to show the shape of the frontier the
+    # reported point sits on; pass --store tune_store when the question is "which point should we
+    # use", so the answer is not read off the events the answer will be reported on.
+    parser.add_argument("--store", choices=["store", "tune_store"], default="store")
     parser.add_argument("--params", type=Path, default=None,
                         help="defaults to results/<active dataset>/clue_parameters.json")
     parser.add_argument("--out", type=Path, default=None,
@@ -73,9 +78,9 @@ def main() -> None:
     wp = cfg["metrics"]["working_points"][0]
     mask_scan = cfg["maskformer"]["mask_scan"]
     object_scan = cfg["maskformer"]["object_scan"]
-    store = EventStore(store_path(), expect=store_expectations())
+    store = EventStore(store_path(args.store), expect=store_expectations())
     records = [store[i] for i in range(min(args.events, len(store)))]
-    print(f"scanning working points on {len(records)} events")
+    print(f"scanning working points on {len(records)} events from {args.store} ({store.root})")
 
     rows = []
 

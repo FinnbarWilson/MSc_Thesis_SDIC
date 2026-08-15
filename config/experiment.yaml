@@ -45,11 +45,20 @@ dataset:
   active: pu0            # pu0 | pu200
 
   pu0:
-    # SHOWER-LEVEL TRUTH, min 10 cells. Dumped 2026-08-13 from run hepattn_20260812-T133423,
-    #   epoch=002-val_loss=1.85281.ckpt
-    # 3 epochs / 60,000 steps over events [0, 20000), AdamW at batch 1, 400 queries,
+    # SHOWER-LEVEL TRUTH, min 10 cells. Dumped 2026-08-14 ON DIAS from run hepattn_20260813-T145153,
+    #   epoch=005-val_loss=1.65500.ckpt
+    # 6 epochs / 120,000 steps over events [0, 20000), AdamW at batch 1, 400 queries,
     # mask_dice 1 + mask_bce 1 with dice-only costs, object_bce 0.1 in BOTH loss and cost,
     # `particle_collapse_shower_secondaries: true` and `particle_min_num_calohits: 10`.
+    #
+    # SUPERSEDES the 60,000-step dump of 2026-08-13 (hepattn_20260812-T133423,
+    # epoch=002-val_loss=1.85281.ckpt), same truth definition and same windows, twice the steps.
+    # The two are comparable through results/ because only the step count changed.
+    #
+    # THE PATHS BELOW ARE ce-ai-1's AND ARE NOT WHERE THIS STORE IS. It lives in
+    # $CALO_STORE_ROOT (~/eventstores on DIAS); src/config.py resolves the NAME below under that
+    # root when the variable is set, so one config stays valid on both machines. `show_config`
+    # prints the resolved path and marks it [relocated].
     #
     # THE PREVIOUS STORES ARE KEPT at .../eventstore_pu0/ (note: no _v2 suffix on the directory).
     # They came from run 20260811-T121619 under mask_dice 20 + mask_focal 1, object_bce cost 0
@@ -405,22 +414,34 @@ clue:
   # efficiency for a reason belonging to the harness rather than to the algorithm -- the mirror
   # image of the unfairness that collapsing the truth removed from the model's side.
   #
-  # SCANNED 2026-08-12 (scripts.scan_link_radius, 8 radii x 50 tuning events;
-  # results/pu0/link_radius_scan.parquet). 0.05 is the f1 optimum, and the honest headline is
-  # that IT BARELY MATTERS: f1 0.5056 unlinked against 0.5070 here, which is noise on 50 events.
+  # RE-SCANNED 2026-08-14 against the re-tuned parameters of the 120,000-step checkpoint
+  # (scripts.scan_link_radius, 8 radii x 50 tuning events; results/pu0/link_radius_scan.parquet).
   #
-  #   radius   eff     pur     split   merge   clusters/ev
-  #   0.00     0.558   0.462   0.231   0.120   242
-  #   0.05     0.543   0.476   0.207   0.122   229
-  #   0.20     0.320   0.481   0.091   0.169   128
+  #   radius   eff     pur     split   merge   clusters/ev   f1
+  #   0.00     0.575   0.470   0.230   0.112   233.0         0.5176
+  #   0.02     0.572   0.474   0.224   0.113   230.5         0.5184   <- nominal f1 optimum
+  #   0.05     0.555   0.483   0.205   0.114   219.2         0.5168   <- this
+  #   0.08     0.523   0.495   0.176   0.119   202.4         0.5086
+  #   0.12     0.461   0.501   0.145   0.135   175.5         0.4803
+  #   0.20     0.308   0.482   0.084   0.155   119.3         0.3759
   #
-  # WHY IT IS KEPT ANYWAY, and it is the split/merge columns rather than f1 that justify it:
-  # linking removes 2.4 points of splitting for 0.2 points of added merging, a 12:1 trade, and
-  # split_rate is a reported metric in its own right. What it does NOT do is raise efficiency,
+  # 0.05 IS NO LONGER THE f1 OPTIMUM AND IS NOT KEPT FOR BEING ONE. The previous scan (2026-08-12,
+  # old tune) put the optimum here at 0.5070 against 0.5056 unlinked; the re-tune moves it to 0.02
+  # and leaves 0.05 fractionally BELOW the unlinked baseline. That is not a regression, it is the
+  # scale of the effect: everything from 0.00 to 0.05 lies inside 0.0016 of f1 on 50 events, which
+  # is noise. Do not re-optimise this number against f1 -- the surface is flat and chasing it would
+  # be fitting to 50 events.
+  #
+  # WHY 0.05 IS KEPT, and it is the split/merge columns rather than f1 that justify it -- the same
+  # criterion as before, which is why the value does not move when f1 shifts under it: linking
+  # removes 2.6 points of splitting for 0.2 points of added merging, a ~13:1 trade, and split_rate
+  # is a reported metric in its own right. Past 0.05 the trade collapses; by 0.12 merging rises
+  # faster than splitting falls. What linking does NOT do is raise efficiency -- it lowers it,
+  # 0.575 -> 0.555, while purity rises 0.470 -> 0.483 --
   # and that is a real finding: rejoining a shower's ECAL and HCAL halves should help, but at pu0
   # the (eta, phi) centroid separation between DIFFERENT showers is comparable to the offset
   # between one shower's two halves, so a centroid-distance criterion cannot tell them apart and
-  # gains and losses cancel. 13 fewer clusters per event, roughly half of them wrong merges.
+  # gains and losses cancel. ~14 fewer clusters per event, roughly half of them wrong merges.
   #
   # THE FIX IF IT IS EVER WORTH IT is a depth-aware criterion -- require the two clusters to be
   # radially consecutive and roughly collinear from the origin, not merely close in angle. That
@@ -458,7 +479,24 @@ clue:
       # (d_c_3d 0.0146 -> 0.029 for ecb) and finer in 2D at the same time.
       ecb: {d_c_2d: [1.0e-4, 0.20], rho_c_2d: [1.0e-7, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
       ece: {d_c_2d: [1.0e-4, 0.20], rho_c_2d: [1.0e-7, 1.0e-2], d_c_3d: [3.0e-3, 0.60], rho_c_3d: [3.0e-5, 3.0e-2], depth_scale: [5.0, 3000.0]}
-      hcb: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
+      # hcb.rho_c_2d FLOOR DROPPED 2026-08-14, 2.0e-5 -> 1.0e-7, after the first tune against the
+      # 120,000-step checkpoint returned 2.339e-05 against a 2.0e-5 bound -- pinned, i.e. the
+      # optimum was outside the box and CLUE would have been reported under-tuned. That matters
+      # more than it looks: CLUE is the classical baseline in the headline comparison, so a
+      # truncated CLUE search flatters MaskFormer.
+      #
+      # 1.0e-7 is ECAL's floor, and the mechanism is the one recorded above for ecb/ece: with a
+      # linking pass above it, the 2D stage does better making FINE, INCLUSIVE per-layer clusters
+      # -- low density threshold, few cells discarded as noise -- and letting the 3D pass and the
+      # cross-subsystem link assemble them. Nothing about that argument is ECAL-specific; HCAL's
+      # floor simply never moved when ECAL's did.
+      #
+      # ONLY hcb, NOT hce, so the two HCAL rows now differ deliberately. hce tuned to 1.062e-04,
+      # comfortably interior, and the search is a logarithmic grid of 80 trials -- widening a range
+      # whose optimum is already interior only coarsens the grid around it. Barrel and endcap have
+      # different geometry and their optima differ by ~4.5x, so symmetry here is a convention worth
+      # breaking rather than a constraint.
+      hcb: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [1.0e-7, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
       hce: {d_c_2d: [2.0e-3, 0.40], rho_c_2d: [2.0e-5, 2.0e-2], d_c_3d: [6.0e-3, 0.80], rho_c_3d: [6.0e-5, 6.0e-2], depth_scale: [2.0, 3000.0]}
 
 # --- MaskFormer -------------------------------------------------------------
@@ -493,7 +531,16 @@ clue:
 # `dataset.pu200.overrides.maskformer` -- because a pu0-trained model evaluated on pu200
 # measures domain shift rather than the architecture.
 maskformer:
-  checkpoint: /home/finn/MSc_Thesis_SDIC/external/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260811-T121619/ckpts/epoch=002-val_loss=39.14410.ckpt
+  # 2026-08-14: the 120,000-step DIAS run. 6 epochs x 20,000 events at batch 1, AdamW, 400 queries,
+  # shower-level truth with particle_min_num_calohits 10. Trained by src/maskformer/dias/train.sh
+  # (job 48412, 16 h 13 m) and dumped by src/maskformer/dias/dump_store.sh (jobs 48417/48418).
+  # val_loss 1.65500, and still falling at the final epoch -- the run is step-limited, not converged.
+  #
+  # The path is on DIAS, where this checkpoint was produced; the previous value was ce-ai-1's. This
+  # field is informational either way, so a stale path is a documentation error rather than a
+  # scoring one -- the store's own metadata is authoritative and make_figures warns when they
+  # disagree, which is what caught this one.
+  checkpoint: /home/xucapfwi/MSc_Thesis_SDIC/logs/hepattn_20260813-T145153/ckpts/epoch=005-val_loss=1.65500.ckpt
 
   # RE-SCANNED 2026-08-13 on the tuning window, by f1 -- the same criterion and the same window
   # CLUE's Optuna search uses, so neither method picks its working point on the events it is
@@ -510,7 +557,11 @@ maskformer:
   mask_threshold: 0.05
   object_threshold: 0.5
   mask_scan: [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-  object_scan: [0.05, 0.1, 0.2, 0.3, 0.5]
+  # EXTENDED PAST 0.5 because 0.5 was the top of the range and f1 was still rising at it, so the
+  # scan could not tell an optimum from a boundary. Whether the extra points beat 0.5 is a result;
+  # what matters is that the question is now askable. The scan range is not the working point --
+  # `object_threshold` above is, and it moves only if the tune window says so.
+  object_scan: [0.05, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
   incidence_floor: 0.0
   incidence_restrict_to_mask: false
   incidence_floor_scan: [0.0, 0.1, 0.2, 0.3, 0.5]

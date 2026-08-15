@@ -2,14 +2,17 @@
 #SBATCH --job-name=calo_train
 #SBATCH --partition=GPU
 # TWO cards, and this is not a throughput request -- trainer.devices stays 1 and only one is used.
-# compute-gpu-0-1 GPU 2 reported 844 uncorrected ECC errors (2026-08-05, up from 818 the week
-# before) and kills jobs with "CUDA error: uncorrectable ECC error" minutes in; job 48163 died at
-# 3:30. The node has three cards and only one was faulty, so any two are guaranteed to include a
-# healthy one, and env.sh's select_gpu picks it out of the allocation. The job queues until two are
-# free rather than gambling a day of walltime on which card it gets.
+# compute-gpu-0-1 GPU 2 kills jobs with "CUDA error: uncorrectable ECC error" minutes in; job 48163
+# died at 3:30. Its uncorrected count was 818, then 844 (2026-08-05), and is 1413 aggregate as of
+# 2026-08-13 -- still climbing, still the only bad card, GPUs 0 and 1 at zero. The node has three
+# cards and only one is faulty, so any two are guaranteed to include a healthy one, and env.sh's
+# select_gpu picks it out of the allocation. The job queues until two are free rather than gambling
+# a day of walltime on which card it gets.
 #
-# RE-CHECK THAT BEFORE TRUSTING IT. The count was climbing. If a second card has since gone bad,
-# two cards no longer guarantee a good one.
+# RE-CHECK THAT BEFORE TRUSTING IT. The count is climbing. If a second card has since gone bad,
+# two cards no longer guarantee a good one. Note the 2026-08-13 re-check also found GPU 2's
+# VOLATILE count reset to 0 while the aggregate kept climbing; select_gpu now reads both, because
+# the volatile-only check it used to do would have called that card healthy.
 #SBATCH --gres=gpu:a100:2
 # 32 CPUs and 256 GB, MEASURED rather than guessed -- see "RESOURCES" below. The CPU count is the
 # single biggest lever on how long this takes, because the job is INPUT-bound on this cluster.
@@ -17,7 +20,7 @@
 #SBATCH --mem=256G
 # The partition allows a maximum of two days. SIZE THIS FROM A MEASURED RATE, not from hope, and
 # move it together with max_epochs -- see the walltime note below.
-#SBATCH --time=36:00:00
+#SBATCH --time=24:00:00
 # ABSOLUTE paths: SBATCH directives resolve against the submission directory, so a relative path
 # aborts the job instantly unless that directory happens to contain the log dir.
 #SBATCH --output=/home/xucapfwi/MSc_Thesis_SDIC/external/slurm_logs/calo_train_%j.out
@@ -60,9 +63,13 @@
 #    CARD SIZE, CONFIRMED 2026-08-13 on the node: three x "NVIDIA A100 80GB PCIe, 81920 MiB".
 #    The cluster docs saying 40 GB are out of date. Batch 4 peaks at ~34 GB, so it fits with room.
 #
-# 3. --mem IS NOT ENFORCED. This cluster runs TaskPlugin=task/affinity with no cgroups, so --mem is
-#    used for SCHEDULING only -- job 48169 booked 128 GB, used 185 GB, and finished. Under-requesting
-#    therefore "works" while over-booking the node for everyone else. The 256G above is what the job
+# 3. --mem IS NOT ENFORCED FOR RESIDENT MEMORY, BUT IT IS A HARD VIRTUAL-MEMORY CAP. This cluster
+#    runs TaskPlugin=task/affinity with no cgroups, so --mem does not bound RSS -- job 48169 booked
+#    128 GB, used 185 GB, and finished. It is NOT free to under-request, though: Slurm applies
+#    VSizeFactor and sets `ulimit -v` to 1.1 x --mem (measured 2026-08-13: 32G -> 35.2 GB cap,
+#    256G -> 281.6 GB). expandable_segments reserves a big virtual range at start-up, so a small
+#    --mem kills CUDA context creation with "CUDA driver error: out of memory" on an empty 80 GB
+#    card. See the note by PYTORCH_ALLOC_CONF in env.sh. The 256G above is what the job
 #    measures at, not a guess with margin.
 #
 #    data.py caches 8 decoded row groups PER WORKER, ~1.4 GB decoded at pu0, so resident memory is
@@ -80,13 +87,22 @@
 #   steps    = num_train x max_epochs / batch_size
 #   walltime = num_train x max_epochs / (events per second)
 #
-# configs/pu0.yaml is 20,000 events x 12 epochs at batch 4 = 60,000 steps. At the measured
-# 1.94 ev/s that is 34.4 h, which is why --time is 36:00:00 and MAX_TIME below stops Lightning at
-# 35 h. RE-MEASURE BEFORE COMMITTING: that rate came from a different configuration (1000 queries
-# against this file's 400, and before the dataloader got faster), so it is likely optimistic in one
-# direction and pessimistic in the other.
+# configs/pu0.yaml is 20,000 events x 6 epochs at batch 1 = 120,000 steps.
 #
-#   NUM_TRAIN=600 MAX_EPOCHS=1 sbatch src/maskformer/dias/train.sh   # ~300 steps, then read the rate
+# RATE, MEASURED 2026-08-13 by job 48411 (NUM_TRAIN=600 MAX_EPOCHS=1, this configuration, with the
+# thread pinning in env.sh in place): 4.24 steps/s, from three separate stretches between
+# validations that each did 140 steps in 33 s. Validation runs ~8.3 it/s, about 45 s per check.
+# That is 2.2x the 1.94 ev/s measured on 2026-08-05 WITHOUT the pinning -- same data, same disks.
+#
+#   120,000 / 4.24 = 7.9 h, plus ~24 validations = ~0.3 h, plus start-up -> 8-9 h.
+#
+# --time IS 24:00:00 AGAINST AN 8-9 h ESTIMATE, DELIBERATELY. The probe ran 600 events, which fit
+# inside the workers' row-group caches; the real run spans 20,000 across many more shards and will
+# do real disk reads, so the sustained rate will be lower than the probe's. 24 h covers even a 2x
+# slowdown. Undershooting the wall costs nothing -- the run just ends early having completed its
+# schedule -- while overshooting costs the decay phase.
+#
+#   NUM_TRAIN=600 MAX_EPOCHS=1 sbatch src/maskformer/dias/train.sh   # re-measure after any change
 #
 # ---------------------------------------------------------------------------------------------
 # OVERRIDES (environment variables at submit time)
@@ -145,7 +161,9 @@ ARGS+=(--data.train_dir "$SHARDS" --data.val_dir "$SHARDS" --data.test_dir "$SHA
 [ -n "${MAX_EPOCHS:-}" ] && ARGS+=(--trainer.max_epochs "$MAX_EPOCHS")
 [ -n "${BATCH_SIZE:-}" ] && ARGS+=(--data.batch_size   "$BATCH_SIZE")
 [ -n "${WORKERS:-}" ]    && ARGS+=(--data.num_workers  "$WORKERS")
-ARGS+=(--trainer.max_time "${MAX_TIME:-00:35:00:00}")
+# Moves with SBATCH --time above, always: one hour under the wall, so Lightning stops cleanly with a
+# written checkpoint rather than taking a SIGKILL mid-schedule. IT SHOULD NOT TRIGGER at 8-9 h.
+ARGS+=(--trainer.max_time "${MAX_TIME:-00:23:00:00}")
 [ -n "${CKPT:-}" ]       && ARGS+=(--ckpt_path         "$CKPT")
 [ -n "${OUT_DIR:-}" ]    && ARGS+=(--trainer.default_root_dir "$OUT_DIR")
 

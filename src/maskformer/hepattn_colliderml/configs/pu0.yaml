@@ -30,28 +30,40 @@ data:
   dataset_prefix: ttbar_pu0
   calo_only: true
 
-  # 4, was 1. RAISED FOR DIAS, and the trade is not free -- read this before changing it back.
+  # 1. Was raised to 4 for DIAS on 2026-08-13 and PUT BACK THE SAME DAY, because the DIAS run it was
+  # raised for never produced a single optimiser step. Do not raise it again without reading this.
   #
-  # STEPS = num_train x max_epochs / batch_size. At batch 4 the same 20,000 events x 6 epochs is
-  # 30,000 optimiser steps, not 120,000. This model is step-starved (validation loss was still
-  # falling at the end of every run so far), so a bigger batch only pays if the gradient it buys is
-  # worth four times fewer updates, or if max_epochs rises to compensate.
+  # STEPS = num_train x max_epochs / batch_size, so batch 4 divides the step count by four. This
+  # model is step-starved -- validation loss was still falling at the end of every run so far, and
+  # two earlier runs reached nearly the same loss at ~20,000 steps despite 6.7x different data
+  # volumes -- so dividing the steps is the wrong direction unless something pays for it.
   #
-  # AND ON DIAS IT MAY BUY NOTHING AT ALL. That job was measured INPUT-bound -- 30% GPU utilisation
-  # at 32 CPUs / 24 workers, 16% at 12 CPUs. When the dataloader is the ceiling, raising the batch
-  # does not raise events/second; it just divides the step count. Measure GPU utilisation over the
-  # first few hundred steps before trusting this value; if it is still low, the lever is
-  # --cpus-per-task and num_workers, not this.
+  # NOTHING PAID FOR IT. Two separate reasons, both measured rather than argued:
   #
-  # MEMORY, measured on ce-ai-1 at 400 queries: batch 1 peaks at 12.5 GB, batch 4 at ~34 GB
-  # (roughly 5 GB fixed plus 7 GB per event in the batch). Both DIAS and ce-ai-1 have 80 GB A100s
-  # (confirmed on the DIAS node 2026-08-13; its docs saying 40 GB are out of date), so batch 4 fits
-  # with room. Events vary a lot though -- pu0 cells/event is ~22k mean against a 62k max -- and the
-  # peak is set by the largest event in a batch, not the mean.
-  batch_size: 4
+  #   1. batch_size == 1 IS A DIFFERENT CODE PATH IN data.py. get_dataloader() hands PyTorch
+  #      batch_size=None with NO collate_fn, because dataset items already carry a leading batch
+  #      dim. Any batch > 1 instead routes through collate_calohit_batch, which pads the
+  #      variable-length hit dimension to the largest event in the batch. pu0 events run ~22k cells
+  #      mean against a 62k max, so that padding is both a big allocation and real CPU work, and it
+  #      happens INSIDE the dataloader workers -- the exact place this job was already limited.
+  #   2. The job was measured input-bound anyway (30% GPU utilisation at 32 CPUs / 24 workers, 16%
+  #      at 12 CPUs). When the dataloader is the ceiling, a bigger batch does not raise events/s.
+  #
+  # MEMORY is not the constraint either way and never was the reason: batch 1 peaks at 12.5 GB
+  # against batch 4's ~34 GB, on an 80 GB card (confirmed on the DIAS node 2026-08-13; the cluster
+  # docs saying 40 GB are out of date). The card was never what limited this.
+  #
+  # COUPLED TO lrs_config.max BELOW, which goes back to 1e-4 with this. They were set together.
+  batch_size: 1
   input_sort_field: phi
-  # 24. This box has 104 cores, so the workers are not competing for them. row_group_cache_size
-  # stays at data.py's default of 8: a pu0 shard is ~790 MB on disk against pu200's ~2.9 GB.
+  # 24. row_group_cache_size stays at data.py's default of 8: a pu0 shard is ~790 MB on disk against
+  # pu200's ~2.9 GB.
+  #
+  # THE "104 CORES SO THEY ARE NOT COMPETING" REASONING WAS ce-ai-1's AND DOES NOT TRANSFER. On DIAS
+  # the job gets a 32-CPU affinity mask out of the node's 128, and the libraries inside each worker
+  # size their own thread pools from the MACHINE, not the mask -- 48 worker processes were measured
+  # holding 960 threads on those 32 cores. dias/env.sh pins the thread pools to 1 to stop that; if
+  # this number is ever raised, re-check the thread total, not just the process count.
   num_workers: 24
 
   num_train: 20000
@@ -107,30 +119,36 @@ data:
   return_tracks: false
 
 trainer:
-  # 12, giving 20,000 x 12 / 4 = 60,000 optimiser steps. This number and batch_size are coupled and
-  # must be read together:
+  # 6, giving 20,000 x 6 / 1 = 120,000 optimiser steps -- the same step count the ce-ai-1 run had.
+  # This number and batch_size are coupled and must be read together:
   #
   #   steps = num_train x max_epochs / batch_size
   #
-  #   batch 1, 6 epochs   = 120,000 steps   (the ce-ai-1 run)
-  #   batch 4, 6 epochs   =  30,000 steps   <- what raising the batch alone would have cost
-  #   batch 4, 12 epochs  =  60,000 steps   <- this
-  #   batch 4, 24 epochs  = 120,000 steps   <- ~69 h at the measured DIAS rate, over the 2-day cap
+  #   batch 1, 6 epochs   = 120,000 steps   <- this, and the ce-ai-1 run
+  #   batch 4, 6 epochs   =  30,000 steps   <- what raising the batch alone cost
+  #   batch 4, 12 epochs  =  60,000 steps   <- the compromise this file briefly carried
+  #   batch 4, 24 epochs  = 120,000 steps   <- ~69 h at the old DIAS rate, over the 2-day cap
   #
-  # So on DIAS, at batch 4, the 120,000 steps the previous run had are NOT reachable inside the
-  # partition's maximum walltime. 60,000 is the compromise; the alternative is batch 1, where the
-  # same walltime buys four times the steps.
+  # Going back to batch 1 is what makes 120,000 steps reachable here at all: at batch 4 they were
+  # outside the partition's walltime cap, which is why max_epochs had to be cut to 12 for 60,000.
   #
-  # WALLTIME. At the measured 1.94 events/s (32 CPUs / 24 workers, 2026-08-05) this is
-  # 20,000 x 12 / 1.94 = 34.4 h, so dias/train.sh asks for 36 h and stops Lightning cleanly an hour
-  # early. THAT RATE IS FROM A DIFFERENT CONFIGURATION -- 1000 queries against this file's 400, and
-  # before the dataloader got faster -- so re-measure over ~300 steps and resize BOTH this and the
-  # SBATCH --time before committing a two-day run.
+  # WALLTIME, from a rate MEASURED at this configuration by job 48411 on 2026-08-13: 4.24 steps/s,
+  # so 120,000 steps is ~7.9 h of training plus ~0.3 h of validation, 8-9 h all in. dias/train.sh
+  # asks for 24 h, deliberately generous -- that probe ran 600 events, small enough to sit in the
+  # workers' caches, and 20,000 will read from disk considerably more.
+  #
+  # The superseded 1.94 events/s (2026-08-05) was taken BEFORE dias/env.sh pinned the native thread
+  # pools, when 48 workers were contending with 960 threads over a 32-CPU mask. Do not compare
+  # against it. Re-measure with
+  #
+  #   NUM_TRAIN=600 MAX_EPOCHS=1 sbatch src/maskformer/dias/train.sh
+  #
+  # after any change to workers, CPUs or batch size, and size BOTH this and SBATCH --time from it.
   #
   # OneCycleLR is sized from total steps and cannot be resized mid-run, so a schedule that overruns
   # its walltime never reaches its decay phase and its final checkpoint sits at a high learning
   # rate. Undershooting the wall costs nothing; overshooting costs the run.
-  max_epochs: 12
+  max_epochs: 6
   # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
   # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
   # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
@@ -198,11 +216,9 @@ model:
     # starting point for this setup. The earlier finding that "1e-4 thrashed and 1.5e-4 diverged at
     # batch 1" was measured under LION at batch 1 and does NOT transfer to AdamW.
     # If 1e-4 turns out to underfit, 5e-4 is the next value to try.
-    # 2e-4 AT BATCH 4, was 1e-4 at batch 1: the square-root scaling of the batch change. A larger
-    # batch gives a less noisy gradient, which supports a proportionally larger step; sqrt rather
-    # than linear because linear scaling is the aggressive end and this has not been swept here.
-    # IF batch_size GOES BACK TO 1, PUT THIS BACK TO 1e-4 -- they were set together.
-    max: 2e-4
+    # 1e-4 AT BATCH 1. This was briefly 2e-4, the sqrt(4) scaling for batch 4; batch_size went back
+    # to 1 on 2026-08-13 (see the note there) and this went back with it, as that note required.
+    max: 1e-4
     end: 1e-6
     # Unchanged at 0.01, but it now means something different and the new meaning is better.
     # OneCycleLR is sized from TOTAL optimiser steps, and dropping accumulation multiplied those by

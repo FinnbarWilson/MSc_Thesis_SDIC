@@ -16,6 +16,18 @@ docs/
 # answerable by `ls`.
 external/
 
+# Training runs: Lightning's default_root_dir, one timestamped directory per run, each holding
+# checkpoints at ~114 MB apiece. Measured 3.0 GB across four runs on 2026-08-14, none of it
+# tracked and none of it wanted -- a single `git add -A` would have committed the lot.
+#
+# THIS ONLY APPEARS ON DIAS, which is why it was not caught earlier. ce_ai_1/train.sh does
+# `cd "$EXP_DIR"` before launching, so `default_root_dir: logs` resolves inside the hepattn
+# checkout under external/ and was already ignored. dias/train.sh runs main.py by absolute path
+# from the submission directory, so the same relative path lands in the repository root instead.
+# Set OUT_DIR= to put a run somewhere else; the checkpoint that matters is recorded in
+# config/experiment.yaml either way.
+logs/
+
 # The raw ColliderML shards are ~300 GB and live outside the repository entirely
 # (/mnt/ai-datastore/finnbar/ColliderML_data). Nothing here should ever point inside the repo
 # for them, but ignore the conventional name in case someone symlinks it.
@@ -33,12 +45,19 @@ results/*/*.db
 # algorithms produce several times that again, in a repository whose .git is already 384 MB
 # on iCloud Drive.
 #
-# The pu0 tables committed before this rule stay tracked: git does not un-track a file
-# because a pattern appears later, and losing the reference set to a housekeeping change
-# would be a bad trade. This governs pu200 and anything scored from here on. To drop the pu0
-# ones deliberately:  git rm --cached results/pu0/particles_*.parquet
+# AN EARLIER VERSION OF THIS COMMENT CLAIMED "the pu0 tables committed before this rule stay
+# tracked". THAT WAS NEVER TRUE and it mattered, because it made the figures look portable when
+# they were not: `git log --all -- 'results/*/particles_*.parquet'` returns nothing, so no per-row
+# table has ever been in this repository's history, for either pileup condition. Anyone pulling a
+# fresh clone gets zero of them.
 #
-# Regenerate any of them with  python -m scripts.score --algo <name>.
+# WHAT TRAVELS INSTEAD IS results/<ds>/figure_summary.csv -- the binned series the five thesis
+# figures actually draw, ~20 KB per dataset, written by scripts.make_thesis_figures. That is the
+# file that lets pu0 (scored on DIAS) and pu200 (scored on ce-ai-1) appear in one figure without
+# either machine holding the other's ~200 MB-1 GB of parquet. It is NOT listed here: it is meant to
+# be committed, and its whole purpose is to cross machines through git.
+#
+# Regenerate any of these with  python -m scripts.score --algo <name>.
 results/*/particles_*.parquet
 results/*/clusters_*.parquet
 results/*/soft_particles_*.parquet

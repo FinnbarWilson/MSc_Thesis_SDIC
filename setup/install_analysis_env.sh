@@ -21,10 +21,28 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$EXTERNAL"
 
+MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+
+# curl, wget, then python, because THIS SCRIPT IS RUN INSIDE A CONTAINER ON DIAS and
+# docker://ubuntu:22.04 is the bare base image -- it ships no curl, and the original
+# `curl -fsSL ...` line failed with "curl: command not found" before conda existed to install one.
+# On DIAS the whole env must be built inside the container anyway: the host is RHEL7 with glibc
+# 2.17 and the pinned conda-forge builds of numpy 2.4 / pandas 3.0 need 2.28+.
+#
+#   apptainer exec --bind $HOME ~/ubuntu22.sif bash setup/install_analysis_env.sh
+fetch() {
+    if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$1" "$2"
+    elif command -v wget >/dev/null 2>&1; then wget -qO "$1" "$2"
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c "import urllib.request,sys; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" "$2" "$1"
+    else
+        echo "ABORT: need one of curl, wget or python3 to download $2" >&2; return 1
+    fi
+}
+
 if [ ! -x "$CONDA_ROOT/bin/conda" ]; then
     echo "=== installing miniforge into $CONDA_ROOT ==="
-    curl -fsSL -o "$EXTERNAL/miniforge.sh" \
-        "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+    fetch "$EXTERNAL/miniforge.sh" "$MINIFORGE_URL"
     bash "$EXTERNAL/miniforge.sh" -b -p "$CONDA_ROOT"
     rm -f "$EXTERNAL/miniforge.sh"
 else

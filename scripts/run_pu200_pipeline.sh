@@ -56,8 +56,16 @@ echo "=== [3/5] scanning the MaskFormer working point on the tune store"
 "$PY" -m scripts.scan_working_points
 
 # ---------------------------------------------------------------- 4. score
-echo "=== [4/5] scoring both methods on the eval store -> results/pu200/"
-"$PY" -m scripts.score
+# ONE ALGORITHM PER INVOCATION -- scripts/score.py declares --algo required, so the bare
+# `scripts.score` this line used to run always died with "the following arguments are required:
+# --algo". It went unnoticed because stage 1 has never completed on this machine, so nothing ever
+# reached stage 4; on DIAS, job 48421 hit it after 44 minutes, 40 of which were the CLUE tune.
+ALGOS="${ALGOS:-maskformer clue oracle_geometric oracle_resolution maskformer_chained}"
+echo "=== [4/5] scoring on the eval store -> results/pu200/: $ALGOS"
+for algo in $ALGOS; do
+    echo "--- scoring $algo"
+    "$PY" -m scripts.score --algo "$algo"
+done
 
 # ---------------------------------------------------------------- 5. figures
 echo "=== [5/5] figures -> figures/pu200/"
