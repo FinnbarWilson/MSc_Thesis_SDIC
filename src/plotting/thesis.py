@@ -37,6 +37,7 @@ stable across figures without importing a second palette's taste.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 
 import matplotlib.pyplot as plt
@@ -83,17 +84,33 @@ JET_MIN_PT = 25.0
 _COLOURS: dict[str, str] = {}
 
 
-def apply() -> None:
-    """Plain scienceplots, plus only what the page geometry requires."""
+def apply(latex: bool | None = None) -> None:
+    """Plain scienceplots, plus only what the page geometry requires.
+
+    Args:
+        latex: render text with a real LaTeX installation rather than matplotlib's mathtext.
+            ``None`` (the default) reads the ``CALO_FIGURE_LATEX`` environment variable, so the
+            choice can be made once for a whole session. It is **off** by default because neither
+            compute cluster this work runs on has a LaTeX installation, and matplotlib raises at
+            draw time rather than falling back when one is missing. Turn it on where the thesis is
+            typeset, so the figures use the document's own fonts and maths.
+    """
     global _COLOURS
+    if latex is None:
+        latex = os.environ.get("CALO_FIGURE_LATEX", "").lower() in {"1", "true", "yes"}
     try:
         import scienceplots  # noqa: F401
 
-        plt.style.use(["science", "no-latex"])
+        plt.style.use(["science"] if latex else ["science", "no-latex"])
     except (ImportError, OSError):
         import warnings
 
         warnings.warn("scienceplots missing; falling back to matplotlib defaults", stacklevel=2)
+    if latex:
+        # scienceplots' own preamble covers siunitx and amsmath; this adds nothing to it and only
+        # asserts the mode, so a missing LaTeX fails here with a clear message rather than midway
+        # through the eighth figure.
+        plt.rcParams.update({"text.usetex": True})
     plt.rcParams.update({
         "figure.dpi": 140,
         "savefig.dpi": 400,

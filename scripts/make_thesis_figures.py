@@ -65,7 +65,6 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from src.clue.pipeline import cluster_event
 from src.config import CONFIG_PATH, settings, store_expectations, store_path
 from src.evaluation.differential import clopper_pearson
 from src.evaluation import anatomy as an
@@ -96,6 +95,12 @@ OUT = Path("figures/thesis")
 def _labels(record, method, cfg, clue_params):
     mf = cfg["maskformer"]
     if method == "clue":
+        # IMPORTED HERE, NOT AT MODULE SCOPE. src.clue.pipeline imports CLUEstering, a compiled
+        # package needed only to re-cluster events from the store. Importing it at the top would
+        # make it a hard requirement of drawing the figures, and --from-summary exists precisely so
+        # the figures can be drawn on a machine carrying nothing but the repository.
+        from src.clue.pipeline import cluster_event
+
         return cluster_event(record, clue_params, coords=cfg["clue"]["coords"],
                              backend=cfg["clue"]["backend"], min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
                              link_radius=cfg["clue"].get("link_radius", 0.0))
@@ -892,6 +897,12 @@ def main() -> None:
     ap.add_argument("--events", type=int, default=120, help="events for the store-derived figures")
     ap.add_argument("--rebuild-anatomy", action="store_true")
     ap.add_argument("--rebuild-jets", action="store_true")
+    ap.add_argument("--from-summary", action="store_true",
+                    help="draw every column from results/<ds>/figure_summary.csv and read nothing "
+                         "else -- no event store, no per-row tables. Use this to redraw the figures "
+                         "on a machine where the analysis was not run.")
+    ap.add_argument("--latex", action="store_true",
+                    help="render text with a real LaTeX installation (requires one to be present)")
     ap.add_argument("--with-chaining", action="store_true",
                     help="also draw maskformer_chained; off by default, see METHODS_MAIN")
     args = ap.parse_args()
@@ -901,7 +912,7 @@ def main() -> None:
     globals()["plt"] = _plt
     if args.with_chaining:
         globals()["METHODS"] = ("maskformer", "maskformer_chained", "clue")
-    th.apply()
+    th.apply(latex=True if args.latex else None)
     OUT.mkdir(parents=True, exist_ok=True)
 
     active = settings()["dataset"]["active"]
@@ -920,6 +931,20 @@ def main() -> None:
         # contributes whatever it has.
         tables, anat, profiles, jets = {}, None, None, None
 
+        # --from-summary is a hard short-circuit, not a hint. It draws the column from the committed
+        # figure_summary.csv and reads nothing else -- not the store, and not the per-row tables
+        # either. Both halves matter: skipping only the store would let a machine holding partial
+        # tables rebuild a summary missing the jets, anatomy and profile rows, and write that over
+        # the complete committed one. This is the mode for drawing the figures somewhere the
+        # analysis was not run.
+        if args.from_summary:
+            if summary_file.exists():
+                print(f"  {ds}: drawing from the committed {summary_file.name}", flush=True)
+                summaries.append(pd.read_csv(summary_file))
+            else:
+                print(f"  ! {ds}: no {SUMMARY_NAME} -- skipping this column", flush=True)
+            continue
+
         parts = sorted(res.glob("particles_*.parquet"))
         if parts:
             tables[ds] = (
@@ -928,6 +953,11 @@ def main() -> None:
                           ignore_index=True),
             )
 
+        # THE STORE IS ONLY TOUCHED FOR THE ACTIVE DATASET. Jets, the shower anatomy and the shower
+        # profiles are the three quantities that cannot be recovered from the per-row tables and
+        # have to be recomputed from the event store, which lives on the compute cluster.
+        # `load_profiles` in particular runs on every invocation for the active dataset, with no
+        # cache to fall back on, so a machine without the store must use --from-summary above.
         jcache = res / "jets.parquet"
         if ds == active and (args.rebuild_jets or not jcache.exists()):
             print(f"  building jet cache for {ds} ({args.events} events) ...", flush=True)
