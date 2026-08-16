@@ -61,6 +61,7 @@ import warnings
 from collections.abc import Mapping
 from pathlib import Path
 
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
@@ -642,9 +643,28 @@ def fig_response(summary, datasets, out):
         # between 0.142 and 0.322 -- the entire learned-method curve sat below the lowest label, on
         # a log axis with minor ticks off, so no value on it could be read. An axis whose labels do
         # not span the series it carries is worse than no axis.
-        axes[1][j].set_yticks([0.1, 0.2, 0.5, 1, 2])
-        axes[1][j].set_yticklabels(["0.1", "0.2", "0.5", "1", "2"])
-        axes[1][j].minorticks_off()
+        #
+        # THEY MUST ALSO LOOK LOGARITHMIC, and the way to do that is UNLABELLED MINOR TICKS rather
+        # than more labels. Two previous attempts labelled every tick -- [0.1, 0.2, 0.5, 1, 2],
+        # then [0.15, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5] -- and both read as a linear axis someone had
+        # written arbitrary numbers on, because a label at every tick destroys the one visual cue
+        # that says "log": the minor ticks crowding together as each decade closes, 0.2 to 0.3 wide
+        # and 0.8 to 0.9 narrow. `minorticks_off()` had removed exactly that cue.
+        #
+        # So: round numbers on the labelled ticks, and the standard 2..9-per-decade minors between
+        # them carrying no text. 0 cannot be one of the labels -- it does not exist on a log axis --
+        # and 0.2 is kept alongside 0.5/1.0/1.5 because the whole pileup-0 MaskFormer curve lives
+        # between 0.14 and 0.32, and an axis whose labels do not reach its data is the failure the
+        # paragraph above is about.
+        #
+        # The range is tightened to what the two datasets actually occupy (0.139 to 1.252 including
+        # bands) so the curves fill the panel rather than sitting in the middle third of it.
+        axes[1][j].set_ylim(0.13, 1.6)
+        axes[1][j].yaxis.set_major_locator(mticker.FixedLocator([0.2, 0.5, 1.0, 1.5]))
+        axes[1][j].yaxis.set_major_formatter(mticker.FixedFormatter(["0.2", "0.5", "1.0", "1.5"]))
+        axes[1][j].yaxis.set_minor_locator(
+            mticker.LogLocator(base=10.0, subs=tuple(np.arange(2, 10) * 0.1), numticks=100))
+        axes[1][j].yaxis.set_minor_formatter(mticker.NullFormatter())
         axes[1][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
         for ax in (axes[0][j], axes[1][j]):
             ax.set_xscale("log")
@@ -757,8 +777,17 @@ def fig_particle_class(summary, datasets, out):
                 axes[row][j].errorbar(pos + offset, yv, yerr=np.abs(err), fmt="none",
                                       ecolor="#333333", elinewidth=0.8, capsize=2)
             axes[row][j].set_xticks(pos, [GROUP_LABELS[c] for c in present])
-        axes[0][j].set_ylim(0, 1.0)
-        axes[1][j].set_ylim(0, None)
+    # ONE LIMIT PER ROW, SET AFTER EVERY BAR IS DRAWN. `sharey="row"` means the first set_ylim
+    # freezes the whole row, so setting it inside the dataset loop pinned both columns to the
+    # autoscale of whichever was drawn FIRST. The fragmentation row inherited pu0's 0.41 and cut
+    # three pu200 bars off at the top, error bars and all -- CLUE on charged hadrons (0.444) and
+    # MaskFormer on neutral (0.431) simply ran off the panel with nothing to say they had.
+    #
+    # 0-1 for both rows rather than a data-driven limit: efficiency and fragmentation are both
+    # fractions of one particle's energy, so the full range is meaningful for each, it cannot clip
+    # whatever a future dataset does, and it makes the two rows read on the same scale.
+    for row in range(2):
+        axes[row][0].set_ylim(0, 1.0)
     axes[0][0].set_ylabel("efficiency")
     axes[1][0].set_ylabel("fragmentation\n(energy outside largest piece)")
     return th.finish(fig, out, ncol=len(METHODS))
@@ -785,7 +814,15 @@ def fig_isolation(summary, datasets, out):
 
     No reference clusterings: see ISOLATION_PT_SLICES for why they were removed.
     """
-    fig, axes = th.grid(len(ISOLATION_PT_SLICES), len(datasets), datasets, sharey=True, sharex="col")
+    # sharex=True, NOT "col". Every panel measures the same coordinate, and the dR RANGE each
+    # dataset covers is itself a result: at pileup 200 no target above 10 GeV has a neighbour
+    # beyond dR = 0.2 and only 14 beyond 0.1, so the binned series simply stops. Under a per-column
+    # axis those panels rescaled to fill the width, and CLUE's rise to 0.85 read as "large
+    # separation" when the axis ended at 0.07 -- the same horizontal position meant a different dR
+    # in each column, in a figure whose entire grammar is comparison across columns. Sharing the
+    # axis puts the truncation on the page, which is the honest version and the more informative
+    # one: the empty right-hand side of the pileup-200 panels is the crowding result.
+    fig, axes = th.grid(len(ISOLATION_PT_SLICES), len(datasets), datasets, sharey=True, sharex=True)
     for j, ds in enumerate(datasets):
         for row, (_, _, key, label) in enumerate(ISOLATION_PT_SLICES):
             ax = axes[row][j]

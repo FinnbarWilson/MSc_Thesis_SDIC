@@ -42,7 +42,7 @@
 # never overwrite a pu0 table, and the two sets of numbers cannot be mixed into
 # one figure by forgetting which is which.
 dataset:
-  active: pu0            # pu0 | pu200
+  active: pu200          # pu0 | pu200
 
   pu0:
     # SHOWER-LEVEL TRUTH, min 10 cells. Dumped 2026-08-14 ON DIAS from run hepattn_20260813-T145153,
@@ -86,28 +86,29 @@ dataset:
       tune_events: 50
 
   # --- pileup 200 -----------------------------------------------------------
-  # Not yet run. What is written here is the list of things that must be decided
-  # before it can be, so that they are decided rather than inherited by default.
-  #
-  # UNSET ON PURPOSE, not forgotten. `store_path()` raises naming the key when
-  # one of these is empty, which is a better failure than silently scoring pu0
-  # events and labelling them pu200.
+  # RUN AND DUMPED. The training run finished 2026-08-14 17:05 on ce-ai-1
+  # (hepattn_20260813-T134117, epoch=003-val_loss=2.06527.ckpt): 4 epochs x 6,000
+  # events at batch 1 = 24,000 steps, 1600 queries, shower-level truth with
+  # particle_min_num_calohits 10 -- the same truth definition as pu0, which is what
+  # makes the two columns comparable at all.
   pu200:
-    # STAGED, NOT YET PRODUCED. Neither directory exists yet: they are the paths
-    # src/maskformer/ce_ai_1/dump_store.sh will write, spelled out here so that
-    # producing the stores is the only remaining step and nobody has to re-derive the
-    # naming. The name is built by eval/dump.py as
-    #   <dataset_prefix>_<start>_<start+num>_v<FORMAT_VERSION>
-    # i.e. ttbar_pu200 + the windows below + format 2, under the script's OUT directory.
+    # SHOWER-LEVEL TRUTH, min 10 cells. Dumped 2026-08-15 by
+    # src/maskformer/ce_ai_1/dump_store.sh from the checkpoint named in the overrides below.
     #
-    # `store_path()` raises while these point at nothing, which is the intended failure --
-    # far better than scoring pu0 events under a pu200 label. Until the dump runs, every
-    # command below will stop with a message naming the missing key.
+    # NOTE THE _v2 DIRECTORY. The store NAME encodes only the window and the format version,
+    # so the previous dump -- .../eventstore_pu200/ttbar_pu200_7500_8000_v2, 2026-08-10, under
+    # particle_min_num_calohits 3, no shower collapse, 2100 queries and checkpoint
+    # epoch=004-val_loss=57.24615.ckpt -- carries an IDENTICAL name. Dumping into the same
+    # directory would have overwritten it in place. The old stores are kept where they are;
+    # event_store.py refuses to open them against this config because
+    # particle_min_num_calohits and particle_collapse_shower_secondaries are contract keys,
+    # which is the check working rather than an obstacle.
     #
-    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store.sh pu200 tune
-    #   CKPT=<pu200 ckpt> ./src/maskformer/ce_ai_1/dump_store.sh pu200 eval
-    store: /mnt/ai-datastore/finnbar/eventstore_pu200/ttbar_pu200_7500_8000_v2
-    tune_store: /mnt/ai-datastore/finnbar/eventstore_pu200/ttbar_pu200_7000_7050_v2
+    #   CKPT=<pu200 ckpt> OUT=/mnt/ai-datastore/finnbar/eventstore_pu200_v2 \
+    #       ./src/maskformer/ce_ai_1/dump_store.sh pu200 tune
+    #   ... and again with `eval`.
+    store: /mnt/ai-datastore/finnbar/eventstore_pu200_v2/ttbar_pu200_7500_8000_v2
+    tune_store: /mnt/ai-datastore/finnbar/eventstore_pu200_v2/ttbar_pu200_7000_7050_v2
     # The store carries its own window and asserts it is disjoint from the
     # checkpoint's training window, so these numbers exist for one purpose: the
     # CLUE tune-vs-eval overlap check in src/config.py. Set them to the windows
@@ -149,39 +150,87 @@ dataset:
         # matters is in the store's metadata either way, and make_figures warns when
         # the two disagree.
         #
-        # The completed 5-EPOCH barrel run, 30,000 steps, val_loss 70.93 -> 57.25 (the 2-epoch
-        # run it replaces ended at 62.85). Measured on 150 test events, best-overlap matching:
+        # THE COMPLETED 4-EPOCH RUN, 24,000 steps, 2026-08-13 13:41 -> 2026-08-14 17:05 on one
+        # A100 80 GB PCIe: 27 h 24 m at 0.23 it/s, val_loss 2.87 -> 2.07, still falling at the
+        # final epoch. Comet e3b8c3609a5b4d6ab72ba5c224532402.
         #
-        #                 eff@0.5  eff@0.75  pur@0.5     F1   cells/flow
-        #   2 epochs       0.635    0.331     0.317    0.423     19.9
-        #   5 epochs       0.663    0.378     0.432    0.523     17.2
+        # IT REPLACES epoch=004-val_loss=57.24615.ckpt (run 20260809-T132559), and the two are
+        # not comparable through the loss: that run weighted the mask loss dice 20 + focal 1 and
+        # predates both the shower-level truth and the >= 10 cell cut, so its 57.2 and this 2.07
+        # are sums over different objectives on different target sets. Compare them only through
+        # results/.
         #
-        # Purity +36% relative and F1 +24% for nothing but training, with thresholds untouched --
-        # which is the logit RANKING improving, the one thing scripts/scan_mf_threshold.py
-        # showed no cut point can fix.
-        checkpoint: external/hepattn/src/hepattn/experiments/colliderml/logs/ColliderML_Calo_Clustering_20260809-T132559/ckpts/epoch=004-val_loss=57.24615.ckpt
-        # The pu0 working point (0.5 / 0.2) is a MEASUREMENT on pu0 -- the object
-        # threshold of 0.2 bought ~25% relative efficiency at flat purity there --
-        # and there is no reason it transfers. Re-derive it with
-        # `scripts.scan_working_points` on the pu200 store before quoting any
-        # pu200 number, and record the result here.
-        mask_threshold: 0.5
-        object_threshold: 0.2
+        # 24,000 steps is well short of pu0's 120,000, and that is a constraint rather than a
+        # choice: only 6,000 events fit before the window runs into the CLUE store windows, and
+        # each step costs 4.5 s on a 1600 x 1600 x 117,000 mask cost. Recorded as a limitation.
+        checkpoint: external/hepattn/src/hepattn/experiments/colliderml/logs/hepattn_20260813-T134117/ckpts/epoch=003-val_loss=2.06527.ckpt
+        # RE-DERIVED 2026-08-15 on the pu200 TUNE window, 9 x 9 grid over 50 events, by f1 --
+        # the same criterion, the same window and the same script pu0 used
+        # (scripts.scan_mf_threshold; results/pu200/mf_threshold_scan.parquet).
+        #
+        # IT LANDS ON THE SAME PAIR AS PU0, and that is a measurement rather than an
+        # inheritance: the previous values here were 0.5 / 0.2, and they are what this scan
+        # replaced. The object axis was scanned over its FULL range to 0.9, so 0.5 is an
+        # interior maximum rather than the top of a truncated range:
+        #
+        #   object   0.05    0.2     0.3     0.5     0.6     0.9
+        #   f1      0.5633  0.5987  0.6385  0.6611  0.6481  0.5505
+        #   eff     0.740   0.729   0.698   0.614   0.566   0.410
+        #   pur     0.455   0.508   0.588   0.717   0.759   0.837
+        #
+        # THE MASK AXIS IS FLAT AND THE OBJECT AXIS IS NOT, exactly as at pu0: at object 0.5,
+        # f1 moves only 0.6551-0.6611 across the whole mask_scan, against 0.5505-0.6611 across
+        # the object range at mask 0.05. The cell probabilities are near-bimodal at both pileup
+        # conditions; how many objects there are remains the harder question.
+        #
+        # 818 clusters/event against 949 true targets: -14% cardinality, against pu0's -12%.
+        mask_threshold: 0.05
+        object_threshold: 0.5
 
-      # clue.search is deliberately NOT overridden yet.
+      clue:
+        # THE CROSS-SUBSYSTEM LINK RADIUS INVERTS AT PU200, and the criterion that chose 0.05
+        # for pu0 is what says so. Scanned 2026-08-15 on the pu200 tuning window
+        # (scripts.scan_link_radius, 8 radii x 50 events; results/pu200/link_radius_scan.parquet):
+        #
+        #   radius   eff     pur     split   merge   clusters/ev
+        #   0.00     0.608   0.496   0.248   0.179   1178.4
+        #   0.01     0.607   0.497   0.248   0.181   1170.3
+        #   0.02     0.605   0.500   0.247   0.189   1146.8   <- this
+        #   0.03     0.600   0.503   0.244   0.201   1108.5   <- nominal f1 optimum, 0.547
+        #   0.05     0.573   0.507   0.232   0.240    988.4   <- pu0's value
+        #   0.08     0.464   0.481   0.192   0.314    716.3
+        #   0.12     0.220   0.446   0.099   0.336    322.9
+        #   0.20     0.021   0.520   0.007   0.166     33.8
+        #
+        # At pu0, 0.05 removed 2.6 points of splitting for 0.2 of merging -- a ~13:1 trade, and
+        # split_rate is a reported metric in its own right. HERE THE SAME RADIUS COSTS 6.1
+        # POINTS OF MERGING FOR 1.6 OF SPLITTING, roughly 1:4 against, and takes 3.5 points of
+        # efficiency with it. This is the failure mode the pu0 comment predicted in the
+        # abstract: a centroid-distance criterion cannot distinguish one shower's ECAL and HCAL
+        # halves from two different showers once the angular separation between DIFFERENT
+        # showers falls below the offset within one of them, and pileup is what makes it fall.
+        # The fix is a depth-aware linker -- radially consecutive and roughly collinear from the
+        # origin -- not a different radius, so this number cannot be tuned out of the problem.
+        #
+        # 0.02 IS CHOSEN ON THE SPLIT/MERGE TRADE, the same criterion as pu0, not on f1: the f1
+        # surface is flat here too (0.546 unlinked against 0.547 at the 0.03 optimum, on 50
+        # events, which is noise). At 0.02 the stage still exists -- CLUE can represent a shower
+        # crossing ECAL into HCAL at all, which is the harness-side unfairness it was added to
+        # remove -- while merging has risen only 1.0 point and purity is still climbing.
+        link_radius: 0.02
+
+      # clue.search is deliberately NOT overridden, and the 2026-08-15 tune is why.
       #
-      # `rho_c` is a local energy density in units of raw cell energy, and pileup
-      # raises the occupancy that density is measured over, so the pu0 ranges are
-      # the wrong box almost by definition -- but by how much is a measurement,
-      # not a guess, and inventing a range here would be exactly the "one
-      # arbitrary algorithm" failure the pu0 ranges were widened to avoid.
+      # `rho_c` is a local energy density in units of raw cell energy, and pileup raises the
+      # occupancy that density is measured over, so the pu0 ranges were expected to be the wrong
+      # box almost by definition. THEY WERE NOT. `tune_subsystem` flags any optimum landing in
+      # the outer 5% of its log range -- the signal that drove the pu0 ranges to their second
+      # iteration -- and it fired for neither subsystem: ecb and hcb both settled 11-44% into
+      # their ranges. The box is wide enough at both pileup conditions, so overriding it here
+      # would narrow a search that converged rather than widen one that did not.
       #
-      # The procedure instead: run `scripts.tune_clue` with the pu0 ranges and
-      # read the edge warnings. `tune_subsystem` reports any optimum landing in
-      # the outer 5% of its log range, which is the same signal that drove the
-      # pu0 ranges to their second iteration. Widen in the direction it names,
-      # re-run, and paste the settled ranges into an `overrides.clue.search`
-      # block here once they no longer press against a bound.
+      # ece and hce are not tuned at all: the barrel cut leaves them with no cells, and
+      # tune_clue records them in `subsystems_empty` rather than inventing parameters for them.
 
 # --- Detector subsystems ----------------------------------------------------
 # The calorimeter is read out as four subsystems, identified in the store by the

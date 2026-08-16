@@ -101,7 +101,7 @@ def collect(store, cfg, clue_params, n_events):
         truth_shapes.append(ts)
         usage.append(an.overlap_usage(record, cfg["maskformer"]["mask_threshold"], cfg["maskformer"]["object_threshold"]))
     merged = {m: an.ShowerCells(**{f: np.concatenate([getattr(c, f) for c in cells[m]])
-                                   for f in ("particle", "dr", "depth", "subsystem", "deposit", "fate", "p_energy")})
+                                   for f in ("particle", "dr", "depth", "subsystem", "deposit", "fate", "p_energy", "p_pt")})
               for m in METHODS}
     return merged, shapes, truth_shapes, pd.DataFrame(usage)
 
