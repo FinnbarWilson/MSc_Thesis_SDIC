@@ -121,7 +121,7 @@ dataset:
     #   tune  [7000, 7050)      eval [7500, 8000)      spare [8000, 10000)
     # Only 10,000 events were downloaded (shards 0-99 of 1000), so these cannot
     # be moved outwards without fetching more shards -- see the download note in
-    # src/maskformer/ce_ai_1/README.md.
+    # src/maskformer/README.md.
     windows:
       eval_start: 7500
       eval_events: 500
@@ -147,7 +147,7 @@ dataset:
       maskformer:
         # A different sample needs a different checkpoint -- a pu0-trained model
         # run on pu200 measures domain shift, not the architecture. The number that
-        # matters is in the store's metadata either way, and make_figures warns when
+        # matters is in the store's metadata either way, and the scorer warns when
         # the two disagree.
         #
         # THE COMPLETED 4-EPOCH RUN, 24,000 steps, 2026-08-13 13:41 -> 2026-08-14 17:05 on one
@@ -298,8 +298,8 @@ particle_selection:
   #   composition 21% protons / 37% e+- / 1% photons
   #
   # Fragments at dR 0.02 inside one shower core are not separable by any algorithm, so that
-  # definition capped efficiency and purity for reasons unrelated to the method: oracle_geometric,
-  # given the true particle count and the true shower axes, still only reached 0.61.
+  # definition capped efficiency and purity for reasons unrelated to the method: even an
+  # idealised clustering given the true particle count and true shower axes reached only 0.61.
   #
   # true merges each fragment onto the ancestor that ENTERED the calorimeter. Not onto the
   # generator root -- a pi0's two photons are two separate showers and the root would fuse them.
@@ -348,18 +348,17 @@ particle_selection:
 # falls with particle energy (0.36 -> 0.16) while its energy-weighted split rate rises (to
 # 0.53). The hit-counted fall is the n_frag blind spot biting hardest on the most fragmented
 # particles, not an improvement, and reporting it would have supported the opposite claim.
+#
+# ONLY THE KEYS BELOW ARE READ. The other choices this section used to list -- the exclusive
+# truth partition, energy weighting, Clopper-Pearson at 1 sigma, bootstrapping by event -- are
+# fixed in src/evaluation/, not switchable, and listing them here implied a knob that does not
+# exist. They are documented where they are implemented.
 metrics:
   working_points: [0.5, 0.75, 1.0]
-  truth_partition: exclusive
-  multiowner_secondary: true
-  weighting: energy            # energy | hits; energy is primary
   split_fraction: 0.10
   min_overlap: 0.0
   min_overlap_frac: 0.05
   min_cluster_hits: 1
-  binomial_interval: clopper_pearson
-  alpha: 0.3173                # 1 sigma
-  bootstrap_by_event: true     # errors from resampling EVENTS, not particles
 
 # --- Reference clusterings --------------------------------------------------
 # Without these the headline numbers cannot be read at all: 0.31 is either poor performance
@@ -391,29 +390,17 @@ metrics:
 # contamination, not by target particles overlapping each other.
 oracle:
   resolution_fraction: 0.5
-  depth_weight: 0.8
 
 # --- Jets -------------------------------------------------------------------
-# DEFERRED. Jet-level comparison waits on the `particle_min_pt` question: 46% of
-# the calorimeter energy comes from particles below the 0.5 GeV cut, so
-# MaskFormer jets would be missing that energy by construction while CLUE's would
-# not, and the resulting plot would measure the target definition rather than
-# either algorithm. Settings recorded so the decisions are not relitigated:
+# Anti-k_t jets are built by src/evaluation/jets.py from each method's clusters and compared
+# against reference jets built the same way from the truth partition of the SAME cells. That
+# reference is what makes the comparison readable: 46% of the calorimeter energy at pileup 0
+# comes from particles below the 0.5 GeV target cut, so jets built against generator-level truth
+# would measure the target definition rather than either algorithm.
 #
-#   - truth jets from the generator four-vectors, NOT deposited energy
-#   - exclude neutrinos AND muons (neither leaves recoverable calorimeter energy)
-#   - per-cell subsystem calibration is mandatory; it does NOT cancel in the
-#     response ratio, because ECAL (37.5/38.7) and HCAL (45.0/46.9) differ and a
-#     cluster's effective calibration depends on its mix
-#   - match with linear_sum_assignment on delta-R, not greedily
-jets:
-  deferred: true
-  radius: 0.4
-  match_delta_r: 0.2
-  min_pt_gev: 20.0
-  max_abs_eta: 3.0
-  exclude_neutrinos: true
-  exclude_muons: true
+# R, the pT floor and the match cone are JET_R / JET_MIN_PT / MATCH_DR in that module. They were
+# duplicated here once and drifted -- this block said 20 GeV and a 0.2 match cone while the code
+# used 25 and 0.3, and the code is what produced every reported number. One definition only.
 
 # --- Reproducibility --------------------------------------------------------
 seed: 42
@@ -560,22 +547,14 @@ clue:
 # -- which is what lets the comparison be shown as a curve rather than a single
 # point that depends on one tuning choice.
 #
-# The model has TWO prediction heads and which one resolves a contested cell is a physics
-# choice, not a detail. The mask head scores each (query, cell) pair through an independent
-# sigmoid, so nothing in its loss relates one cell's claims to each other -- it is a
-# detection score. The incidence head softmaxes over queries within a cell and is trained by
-# KL divergence against I_ia = E_ia / E_i, so its output IS a share of that cell's energy.
-# Until store format 2 only the mask head was written out, so every number reported before
-# then resolved ownership with the quantity that was never trained to divide a cell.
-#
-# `incidence_floor` is a working point on the winning share: 0 assigns every detected cell,
-# which is the setting comparable to CLUE, while a positive value declines cells nobody
-# clearly owns. `incidence_restrict_to_mask` is a CONTROL, not a working point -- it forces
-# the winner to be a query whose mask also claims the cell, which separates "assigns detected
-# cells better" from "reaches cells the mask head gave to nobody".
+# Cell ownership is resolved by the MASK head, which scores each (query, cell) pair through an
+# independent sigmoid. That is the only head that decides membership: both models here are the
+# two-head configuration -- object classification plus mask -- and neither has an incidence
+# head. See the "THE INCIDENCE HEAD IS DELIBERATELY ABSENT" note in
+# src/maskformer/hepattn_colliderml/configs/pu0.yaml, which also says how to restore it.
 #
 # `checkpoint` is informational: the authoritative record of which weights produced a
-# store is inside the store's own metadata, and `make_figures` warns when the two names
+# store is inside the store's own metadata, and the scorer warns when the two names
 # disagree rather than trusting either. It is a per-dataset value -- see
 # `dataset.pu200.overrides.maskformer` -- because a pu0-trained model evaluated on pu200
 # measures domain shift rather than the architecture.
@@ -587,7 +566,7 @@ maskformer:
   #
   # The path is on DIAS, where this checkpoint was produced; the previous value was ce-ai-1's. This
   # field is informational either way, so a stale path is a documentation error rather than a
-  # scoring one -- the store's own metadata is authoritative and make_figures warns when they
+  # scoring one -- the store's own metadata is authoritative and the scorer warns when they
   # disagree, which is what caught this one.
   checkpoint: /home/xucapfwi/MSc_Thesis_SDIC/logs/hepattn_20260813-T145153/ckpts/epoch=005-val_loss=1.65500.ckpt
 
@@ -611,29 +590,4 @@ maskformer:
   # what matters is that the question is now askable. The scan range is not the working point --
   # `object_threshold` above is, and it moves only if the tune window says so.
   object_scan: [0.05, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
-  incidence_floor: 0.0
-  incidence_restrict_to_mask: false
-  incidence_floor_scan: [0.0, 0.1, 0.2, 0.3, 0.5]
 
-  # --- seeded chaining (algo `maskformer_chained`) ---------------------------
-  # Cell-to-cell linking distance in METRES for src/postproc/chain.py, which grows the predicted
-  # clusters outwards into unclaimed cells the way CLUE's nearest-denser-neighbour chaining does.
-  # It is a linking scale, not a cluster radius: chaining reaches far by taking many small steps.
-  #
-  # 0.05 is chosen on the TUNE window [20000, 20050), disjoint from the 500 events scored, the same
-  # discipline CLUE's own parameters get. Measured there:
-  #
-  #   link d      eff     pur   eff>20
-  #   (none)    0.377   0.278    0.159
-  #   0.01      0.419   0.250    0.179
-  #   0.05      0.455   0.219    0.205
-  #   0.08      0.470   0.212    0.216
-  #   0.12      0.478   0.208    0.214
-  #
-  # IT BUYS EFFICIENCY WITH PURITY AND THERE IS NO SETTING WHERE IT DOES NOT. That is the same
-  # trade CLUE makes (0.315 / 0.251), so quote both numbers or neither. 0.05 sits where efficiency
-  # is still climbing steeply and purity has not yet collapsed; 0.01 is the value that MATCHES
-  # CLUE's purity, which is the fairer setting for a like-for-like headline claim.
-  # `scripts.scan_working_points` draws the whole curve, which is the honest form of this choice.
-  chain_link_distance: 0.05
-  chain_link_scan: [0.0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.12]

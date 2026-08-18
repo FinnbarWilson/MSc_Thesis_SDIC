@@ -27,13 +27,12 @@ There is no tracker panel. ColliderML ships silicon hits and this repo never dow
 the comparison is a calorimeter problem, so the analogues of the Si/VTXD/muon-chamber panels
 are the four calorimeter subsystems instead.
 
-THE TWO PARTICLE DEFINITIONS
+THE PARTICLE DEFINITION
 
---collapse (the default) merges each in-calorimeter secondary onto the particle whose shower
-it belongs to, which is the thesis's target definition. --no-collapse gives one row per Geant
-fragment, the definition every result up to and including results/pu0 was scored under. They
-are genuinely different pictures of the same events -- 325 against 1,936 depositing particles
-per pu0 event -- and the figure records which one it drew in its own filename.
+Each in-calorimeter secondary is merged onto the particle whose shower it belongs to, which is
+the thesis's target definition. Without that collapse there is one row per Geant fragment, a
+genuinely different picture of the same events -- 325 against 1,936 depositing particles per pu0
+event. The collapse itself lives in src/io/colliderml.py and is tested both ways.
 """
 
 from __future__ import annotations
@@ -230,12 +229,6 @@ def main() -> None:
     ap.add_argument("--dataset", choices=DATASETS, default=active_dataset(), help="which pileup condition to describe")
     ap.add_argument("--events", type=int, default=200, help="events to read; pu200 costs about 3 s each")
     ap.add_argument("--raw-root", type=Path, default=cml.DEFAULT_RAW_ROOT, help="directory of ttbar_<dataset>_<collection> parquet shards")
-    ap.add_argument(
-        "--no-collapse",
-        dest="collapse",
-        action="store_false",
-        help="one row per Geant fragment instead of per calorimeter-entering shower",
-    )
     ap.add_argument("--rebuild", action="store_true", help="re-read the shards even if the cache is present")
     args = ap.parse_args()
 
@@ -244,10 +237,9 @@ def main() -> None:
     # selection lines an axis-width away from where they belong.
     cfg = settings_for(args.dataset)
 
-    suffix = "" if args.collapse else "_fragments"
     results = RESULTS_ROOT / args.dataset
     figures = FIGURES_ROOT / args.dataset
-    cache = results / f"dataset_features{suffix}.parquet"
+    cache = results / "dataset_features.parquet"
 
     if cache.exists() and not args.rebuild:
         table = pd.read_parquet(cache)
@@ -259,7 +251,7 @@ def main() -> None:
             args.dataset,
             args.events,
             min_hit_energy=float(cfg["hit_selection"]["calohit_min_energy"]),
-            collapse_shower_secondaries=args.collapse,
+            collapse_shower_secondaries=True,
         )
         results.mkdir(parents=True, exist_ok=True)
         table.to_parquet(cache, index=False)
@@ -270,11 +262,11 @@ def main() -> None:
     classes = [name for name in cml.CLASS_ORDER if present.get(name, 0) > 0]
 
     style.apply()
-    print("  dataset_features   ", figure_features(table, classes, selection_cuts(cfg), figures / f"dataset_features{suffix}"), flush=True)
-    print("  dataset_subsystems ", figure_subsystems(table, classes, figures / f"dataset_subsystems{suffix}"), flush=True)
+    print("  dataset_features   ", figure_features(table, classes, selection_cuts(cfg), figures / "dataset_features"), flush=True)
+    print("  dataset_subsystems ", figure_subsystems(table, classes, figures / "dataset_subsystems"), flush=True)
 
     summary = selection_table(table, cfg)
-    summary_path = results / f"dataset_features_selection{suffix}.csv"
+    summary_path = results / "dataset_features_selection.csv"
     summary.to_csv(summary_path, index=False)
     print(f"\n{summary.to_string(index=False, float_format=lambda v: f'{v:.3f}')}\n\nwrote {summary_path}")
 

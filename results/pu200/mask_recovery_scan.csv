@@ -1,7 +1,0 @@
-mask_threshold,nominal,e_clustered_over_on_target,e_clustered_over_calo,cells_claimed_per_event,clusters_per_event
-0.02,False,0.939158,0.616764,33563.7,849.802
-0.03,False,0.929738,0.610578,33245.8,849.69
-0.05,True,0.919413,0.603798,32893.3,849.592
-0.1,False,0.904661,0.594109,32389.4,849.452
-0.2,False,0.889495,0.58415,31863.9,849.366
-0.5,False,0.864795,0.567929,30989,849.158

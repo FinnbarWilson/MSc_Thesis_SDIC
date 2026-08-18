@@ -11,7 +11,7 @@
 #SBATCH --error=/home/xucapfwi/MSc_Thesis_SDIC/external/slurm_logs/calo_analysis_%j.err
 
 # Turn a dumped event store into CLUE numbers, MaskFormer numbers, the thesis figures and the
-# portable figure summary. The DIAS counterpart to scripts/run_pu200_pipeline.sh.
+# portable figure summary.
 #
 #   sbatch src/maskformer/dias/analysis.sh            # the active dataset in config/experiment.yaml
 #   SKIP_TUNE=1 sbatch src/maskformer/dias/analysis.sh   # reuse the committed clue_parameters.json
@@ -73,18 +73,15 @@ run -m scripts.scan_working_points || exit 1
 
 # ONE ALGORITHM PER INVOCATION. scripts/score.py takes --algo as a required choice and scores
 # exactly one, writing particles_<algo>.parquet and clusters_<algo>.parquet; there is no "score
-# everything" mode. scripts/run_pu200_pipeline.sh calls a bare `scripts.score` and therefore dies
-# with "the following arguments are required: --algo" -- job 48421 hit exactly that, 44 minutes in,
-# after the tuning it had just spent 40 of them on. Fixed there too.
+# everything" mode.
 #
 # --params is NOT passed: score.py defaults to this dataset's own results/<ds>/clue_parameters.json,
 # which is what stage 1 just wrote. Passing it explicitly was a footgun once results became
 # dataset-scoped, and the file documents that.
 #
-# The two oracle_* rows are reference clusterings rather than methods under test, and
-# maskformer_chained is the interventions-table arm that METHODS_MAIN deliberately excludes from
-# the headline figures. All five are scored because results/pu0/ carried all five before.
-ALGOS="${ALGOS:-maskformer clue oracle_geometric oracle_resolution maskformer_chained}"
+# oracle_resolution is a reference clustering rather than a method under test; it is scored
+# through the same entry point so the ceiling is measured by the same code as the methods.
+ALGOS="${ALGOS:-maskformer clue oracle_resolution}"
 echo && echo "=== [3/4] scoring on the eval store: $ALGOS"
 for algo in $ALGOS; do
     echo "--- scoring $algo"

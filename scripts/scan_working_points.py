@@ -20,14 +20,12 @@ import argparse
 import json
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.clue.pipeline import SUBSYSTEMS, cluster_event
-from src.config import describe, figures_dir, results_dir, settings, store_expectations, store_path
+from src.clue.pipeline import cluster_event
+from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.evaluation.metrics import score_event
 from src.io.event_store import EventStore
-from src.plotting import figures, style
 
 #: CLUE's density threshold is scanned as a MULTIPLE of its tuned value rather than over an
 #: absolute grid, so the scan follows the tuning instead of having to be re-chosen with it --
@@ -64,15 +62,12 @@ def main() -> None:
                         help="defaults to results/<active dataset>/clue_parameters.json")
     parser.add_argument("--out", type=Path, default=None,
                         help="defaults to results/<active dataset>/wp_scan.parquet")
-    parser.add_argument("--figure", type=Path, default=None,
-                        help="defaults to figures/<active dataset>/working_point_curve")
     args = parser.parse_args()
 
     cfg = settings()
     results = results_dir()
     params_path = args.params or (results / "clue_parameters.json")
     out_path = args.out or (results / "wp_scan.parquet")
-    figure_path = args.figure or (figures_dir() / "working_point_curve")
     print(describe())
 
     wp = cfg["metrics"]["working_points"][0]
@@ -148,26 +143,6 @@ def main() -> None:
     scan.to_parquet(out_path, index=False)
     print(f"\nwrote {out_path}")
     print(scan[["algo", "knob", "efficiency", "purity", "mean_eff", "fake_rate", "clusters_per_event"]].to_string(index=False, float_format=lambda v: f"{v:.3f}"))
-
-    # Mark where the reachable corner is, if the reference clusterings have been scored. A
-    # bare 0-1 square makes both methods look uniformly poor when most of that square is not
-    # available to any algorithm.
-    reference = {}
-    for name in ("oracle_geometric", "oracle_resolution"):
-        p_path = results / f"particles_{name}.parquet"
-        c_path = results / f"clusters_{name}.parquet"
-        if p_path.exists() and c_path.exists():
-            reference[name] = (
-                float((pd.read_parquet(p_path, columns=["eff_e"])["eff_e"] >= wp).mean()),
-                float((pd.read_parquet(c_path, columns=["pur_e"])["pur_e"] >= wp).mean()),
-            )
-
-    style.apply()
-    figure_path.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in ("pdf", "png"):
-        figures.working_point_curve(scan, reference=reference, out=figure_path.with_suffix(f".{suffix}"))
-    plt.close("all")
-    print(f"wrote {figure_path}.pdf / .png")
 
 
 if __name__ == "__main__":

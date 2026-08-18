@@ -18,14 +18,13 @@ partitioning method and reachable for a mask-based one -- is a structural claim,
 structural test rather than one pinned to a measured rate.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from src.evaluation.metrics import score_event
 from src.evaluation.soft import capability_summary, hard_weights, score_event_soft, sharing_diagnostics
-from src.io.event_store import EventStore, logit_code_for_threshold, probability_for_logit_code
+from src.io.event_store import logit_code_for_threshold, probability_for_logit_code
 from tests.conftest import open_smoke_store
 
 # The store path, the skip and the caching all live in tests/conftest.py, so that

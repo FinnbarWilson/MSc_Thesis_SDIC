@@ -3,10 +3,9 @@
     python -m scripts.rescore_mask_threshold
     python -m scripts.rescore_mask_threshold --thresholds 0.02 0.05 --events 200
 
-THE QUESTION THIS ANSWERS, AND WHY IT NEEDED A SCRIPT OF ITS OWN. `scripts.scan_mask_recovery`
-established that the energy MaskFormer leaves unclustered is REACHABLE: at a mask threshold of 0.02
-it claims 0.9890 of the on-target energy against 0.9703 at the working point of 0.05, and the
-cluster count does not move. What it deliberately did not do is re-score, so the trade was unknown
+THE QUESTION THIS ANSWERS. The energy MaskFormer leaves unclustered is REACHABLE: at a mask
+threshold of 0.02 it claims 0.9890 of the on-target energy against 0.9703 at the working point of
+0.05, and the cluster count does not move. Establishing that alone leaves the trade unknown
 -- and it cannot be inferred, because efficiency and purity are counts of threshold crossings
 rather than energy fractions. A cluster sitting at purity 0.51 crosses the working point on an
 arbitrarily small contamination, so no bound on the contaminating ENERGY bounds the purity LOSS.
@@ -34,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd

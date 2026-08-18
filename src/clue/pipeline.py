@@ -1,10 +1,15 @@
-"""The classical baseline: a two-stage CLUE pipeline over calorimeter cells.
+"""The classical baseline: a three-stage CLUE pipeline over calorimeter cells.
 
 Running CLUE once in three dimensions tends to merge showers that overlap in depth, so the
-pipeline follows the two-stage strategy used for high-granularity calorimeter
-reconstruction: cluster within each detector layer first, reduce each layer cluster to a
-single centroid, then cluster the centroids in three dimensions to link the per-layer pieces
-of one shower into a trackster.
+pipeline follows the layered strategy used for high-granularity calorimeter reconstruction:
+
+  1. cluster within each detector layer, in 2D (:func:`cluster_subsystem`);
+  2. reduce each layer cluster to a centroid and cluster the centroids in 3D, linking the
+     per-layer pieces of one shower into a trackster (:func:`cluster_subsystem`);
+  3. link clusters ACROSS sub-detectors (:func:`link_across_subsystems`), because stages 1-2
+     run per sub-detector and a shower crossing ECAL into HCAL is otherwise split by
+     construction. Its one parameter, `clue.link_radius`, is chosen by
+     `scripts.scan_link_radius`.
 
 Both passes call the same CLUEstering library, which is possible only because it accepts an
 arbitrary number of dimensions. Nothing here modifies the algorithm: the parameters are

@@ -5,25 +5,16 @@ a label per cell and nothing else. That is what makes the head-to-head fair in a
 inspecting two configs cannot guarantee.
 
     python -m scripts.score --algo maskformer
-    python -m scripts.score --algo maskformer_incidence
     python -m scripts.score --algo clue --params results/pu0/clue_parameters.json
-    python -m scripts.score --algo oracle_geometric
     python -m scripts.score --algo oracle_resolution
 
 Tables land in ``results/<active dataset>/``, so the same commands produce the pu200 set
 after flipping ``dataset.active`` and cannot overwrite the pu0 one.
 
-`maskformer` and `maskformer_incidence` are the same checkpoint at the same working point,
-differing only in which head decides who owns a contested cell -- the mask head's per-(query,
-cell) sigmoid, or the incidence head's softmax over queries, the latter being the one trained
-against the true energy fractions. Detection comes from the mask head in both, so the two
-claim identical cells and the difference between their rows is the assignment rule alone.
-Score both; the comparison between them is a result, not a tuning choice.
-
-The two `oracle_*` algorithms are reference clusterings rather than methods under test; see
-src/evaluation/oracle.py for what each one is and how to read it. They come through this same
-entry point, and the scorer is no more aware of them than of anything else, which is the
-point: a ceiling measured by different code from the methods it bounds is not a ceiling.
+`oracle_resolution` is a reference clustering rather than a method under test; see
+src/evaluation/oracle.py for what it is and how to read it. It comes through this same entry
+point, and the scorer is no more aware of it than of anything else, which is the point: a
+ceiling measured by different code from the methods it bounds is not a ceiling.
 """
 
 import argparse
@@ -35,9 +26,8 @@ import pandas as pd
 from src.clue.pipeline import SUBSYSTEMS, cluster_event
 from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.evaluation.metrics import pool, score_event
-from src.evaluation.oracle import geometric_labels, resolution_labels
+from src.evaluation.oracle import resolution_labels
 from src.io.event_store import EventStore
-from src.postproc import chain_labels
 
 # Untuned starting point, chosen against the measured cell energy scale rather than guessed;
 # see the commentary on `clue.search` in config/experiment.yaml. Replaced by the Optuna
@@ -61,39 +51,6 @@ def maskformer_labels(record, cfg):
     )
 
 
-def maskformer_chained_labels(record, cfg):
-    """MaskFormer's clusters, then grown outwards by chaining. See src/postproc/chain.py.
-
-    Scored as a separate algorithm rather than replacing `maskformer`, for the same reason
-    `maskformer_incidence` is: both come through this scorer unchanged, so the difference between
-    the two rows isolates the post-processing from everything else about the model.
-    """
-    mf = cfg["maskformer"]
-    label, n = maskformer_labels(record, cfg)
-    return chain_labels(
-        record, label, n,
-        link_distance=mf["chain_link_distance"],
-        min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
-    )
-
-
-def maskformer_incidence_labels(record, cfg):
-    """The same model and the same detected cells, with ownership from the incidence head.
-
-    Scored as a separate algorithm rather than replacing `maskformer`, because the pair is
-    the result: both come through this scorer unchanged, so the difference between the two
-    rows isolates the assignment rule from everything else about the model.
-    """
-    mf = cfg["maskformer"]
-    return record.maskformer_incidence_labels(
-        mask_threshold=mf["mask_threshold"],
-        object_threshold=mf["object_threshold"],
-        min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
-        incidence_floor=mf.get("incidence_floor", 0.0),
-        restrict_to_mask=mf.get("incidence_restrict_to_mask", False),
-    )
-
-
 def clue_labels(record, cfg, params):
     return cluster_event(
         record,
@@ -110,8 +67,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--algo",
-        choices=["maskformer", "maskformer_chained", "maskformer_incidence", "clue",
-                 "oracle_geometric", "oracle_resolution"],
+        choices=["maskformer", "clue", "oracle_resolution"],
         required=True,
     )
     parser.add_argument("--store", type=Path, default=None, help="defaults to dataset.<active>.store")
@@ -159,14 +115,8 @@ def main() -> None:
             break
         if args.algo == "maskformer":
             label, n = maskformer_labels(record, cfg)
-        elif args.algo == "maskformer_chained":
-            label, n = maskformer_chained_labels(record, cfg)
-        elif args.algo == "maskformer_incidence":
-            label, n = maskformer_incidence_labels(record, cfg)
         elif args.algo == "clue":
             label, n = clue_labels(record, cfg, params_by_subsystem)
-        elif args.algo == "oracle_geometric":
-            label, n = geometric_labels(record, depth_weight=cfg["oracle"]["depth_weight"])
         else:
             label, n = resolution_labels(record, cfg["oracle"]["resolution_fraction"])
 

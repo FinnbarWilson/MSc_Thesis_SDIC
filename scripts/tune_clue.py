@@ -20,7 +20,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src.clue.tuning import tune_subsystem
+from src.clue.search import tune_subsystem
 from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.io.event_store import EventStore
 

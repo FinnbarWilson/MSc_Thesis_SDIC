@@ -34,8 +34,7 @@ def main() -> None:
           f"tune window [{tune_window[0]}, {tune_window[0] + tune_window[1]})")
 
     mf = cfg["maskformer"]
-    print(f"  maskformer   mask {mf['mask_threshold']}  object {mf['object_threshold']}  "
-          f"incidence floor {mf.get('incidence_floor', 0.0)}")
+    print(f"  maskformer   mask {mf['mask_threshold']}  object {mf['object_threshold']}")
     print(f"  checkpoint   {str(mf['checkpoint']).rsplit('/', 1)[-1] or '(unset)'}")
     print(f"  clue         {cfg['clue']['coords']}, {cfg['clue']['optuna_trials']} trials, "
           f"backend {cfg['clue']['backend']!r}")

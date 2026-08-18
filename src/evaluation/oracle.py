@@ -1,36 +1,24 @@
-"""Reference clusterings, so the reported numbers have something to be measured against.
+"""The resolution reference, so the reported numbers have something to be measured against.
 
-An efficiency of 0.31 is uninterpretable on its own. It could mean the method is poor, or it
-could mean the task is nearly saturated and 0.35 is all anyone gets. Nothing in the figures
-distinguished those two readings, which is the single largest gap in the analysis: a reader
-cannot tell whether the gap to 1.0 is headroom or physics.
+An efficiency of 0.55 is uninterpretable on its own. It could mean the method is poor, or it
+could mean the task is nearly saturated and 0.6 is all anyone gets. A reader otherwise cannot
+tell whether the gap to 1.0 is headroom or physics.
 
 Note first why the obvious ceiling is not one. Feeding the truth partition back in as a
 prediction scores exactly 1 by construction -- ``tests/test_scorer_identity.py`` asserts it --
 so "perfect" is trivially achievable and says nothing. A meaningful ceiling has to come from
 an *information* constraint: what could an algorithm achieve that does not get to read the
-truth label off each cell? Two are built here, bracketing the answer from different sides.
+truth label off each cell?
 
-**Geometric** (:func:`geometric_labels`). An idealised algorithm handed the two things every
-clustering method must otherwise infer -- the true number of particles and the true shower
-axis of each -- which then assigns every cell to the nearest axis in angle and depth. Its one
-free parameter, the relative weight of depth, is *scanned and maximised* rather than guessed:
-a ceiling left at an arbitrary setting is not a ceiling but one arbitrary algorithm.
+An earlier version of this module also built a **geometric** ceiling -- perfect shower axes
+and particle count, every cell assigned to the nearest axis. It was dropped from the analysis
+because it is not a ceiling: it is optimistic in knowing the true count and axes, and it
+bounds only spatial clustering as a class, which is CLUE's class and not MaskFormer's. The
+thesis reports the resolution reference alone.
 
-This is the ceiling for **spatial clustering as a class**, which is the class CLUE belongs to
-and MaskFormer does not. That gives it a use no aggregate number has: if a learned model
-exceeds the best achievable by perfect-seeded geometry, it is demonstrably using something
-beyond geometry, and if it does not, the gap says how much is left on the table before
-architecture is the limiting factor.
-
-Read it as a bound on that class and not as a universal one -- it remains *optimistic* in
-knowing the true particle count and axes. An earlier version used angle alone, which was an
-unfair reference for a depth-aware method like CLUE; depth is worth more than expected here,
-lifting the ceiling from 0.530 to 0.591 mean efficiency.
-
-**Resolution** (:func:`resolution_labels`). Comes at it from the other side and asks how many
-target particles are physically inseparable to begin with. Particles whose showers share the
-same cells, carrying a large fraction of each, are merged into one object; every cell is then
+**Resolution** (:func:`resolution_labels`). Asks how many target particles are physically
+inseparable to begin with. Particles whose showers share the same cells, carrying a large
+fraction of each, are merged into one object; every cell is then
 assigned perfectly within that merged set. Efficiency is ~1 by construction, so the number to
 read is the **purity**, which is a genuine ceiling: no exclusive-partition algorithm can be
 purer than the detector's own granularity allows. Unowned cells -- the sub-threshold deposits
@@ -38,8 +26,8 @@ that are 46% of the calorimeter energy -- are assigned to the nearest merged obj
 than dropped, because dropping them would hand this reference a contamination advantage that
 neither real method enjoys and quietly inflate the ceiling.
 
-Both are scored through :func:`~src.evaluation.metrics.score_event` like any other algorithm,
-by the same code path, so they land in the same tables and plot on the same axes.
+It is scored through :func:`~src.evaluation.metrics.score_event` like any other algorithm, by
+the same code path, so it lands in the same tables and plots on the same axes.
 """
 
 from dataclasses import dataclass
@@ -54,18 +42,6 @@ from scipy.spatial import cKDTree
 #: negligible cost to the result, since a contributor outside the top few cannot hold the
 #: `fraction` of itself that :func:`resolution_labels` requires.
 MAX_OWNERS_PER_CELL = 4
-
-
-#: Depth weights scanned when building the geometric ceiling. A ceiling is allowed -- in fact
-#: obliged -- to take the best value of its own free parameter: leaving it at an arbitrary
-#: setting would understate the bound and flatter everything measured against it.
-#:
-#: The range brackets the measured optimum of 0.8 on both sides, which matters here for the
-#: same reason it does in CLUE's tuning: a first pass over [0, 0.8] returned the optimum
-#: pressed against its upper bound, which means the box was wrong rather than that the answer
-#: was 0.8. Extending upward found a genuine turnover (0.591 at 0.8, 0.570 at 1.6, 0.403 at
-#: 25.6), so the optimum is now interior and the ceiling is not an artefact of the range.
-DEPTH_WEIGHT_SCAN = (0.0, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2)
 
 
 @dataclass(frozen=True)
@@ -146,96 +122,6 @@ def particle_geometry(record) -> ParticleGeometry:
     # cell, so nothing is ever assigned to it and the choice cannot affect any metric.
     direction = np.where(norm > 1e-12, accum / np.maximum(norm, 1e-12), np.array([0.0, 0.0, 1.0]))
     return ParticleGeometry(energy=total, direction=direction, depth=depth)
-
-
-def _assignment_space(directions: np.ndarray, depths: np.ndarray, depth_weight: float) -> np.ndarray:
-    """Stack angle and depth into one space a Euclidean nearest-neighbour query can search.
-
-    Chordal distance on the unit sphere is monotonic in opening angle, so the first three
-    columns make a Euclidean query an angular one with no phi wraparound to special-case. The
-    fourth adds depth at a chosen weight; at ``depth_weight = 0`` the result is the pure
-    angular assignment.
-
-    Depth turns out to be worth roughly as much as angle: the measured optimum is 0.8 against
-    a unit-vector angular term, and it lifts the ceiling from 0.530 to 0.591 mean efficiency.
-    That is a larger contribution than one might expect, and it is the reason the angle-only
-    version was an unfair reference for CLUE, which uses depth.
-
-    It does not keep rising, though, and the reason is worth knowing. A shower is a ray from
-    the interaction point, not a point, so beyond about 1.0 the depth term starts cutting
-    showers across their own radial extent rather than separating neighbours, and the ceiling
-    falls away steadily -- 0.570 at 1.6, down to 0.403 at 25.6.
-    """
-    if depth_weight == 0.0:
-        return directions
-    return np.column_stack([directions, depth_weight * depths])
-
-
-def geometric_labels(
-    record,
-    geometry: ParticleGeometry | None = None,
-    depth_weight: float = 0.0,
-) -> tuple[np.ndarray, int]:
-    """Assign every cell to the nearest true shower axis in angle and depth.
-
-    Args:
-        record: an :class:`~src.io.event_store.EventRecord`.
-        geometry: precomputed axes, to avoid recomputing them across a weight scan.
-        depth_weight: relative weight of the depth coordinate. Use
-            :func:`best_depth_weight` to choose it rather than guessing.
-
-    Returns:
-        ``(label, n_clusters)`` in the same form every other method returns, so the result
-        goes straight into :func:`~src.evaluation.metrics.score_event`.
-    """
-    geometry = geometry or particle_geometry(record)
-    n = int(record.n_particles)
-    if n == 0 or record.n_hits == 0:
-        return np.full(record.n_hits, -1, dtype=np.int32), 0
-
-    tree = cKDTree(_assignment_space(geometry.direction, geometry.depth, depth_weight))
-    _, nearest = tree.query(
-        _assignment_space(_cell_directions(record), _cell_depths(record), depth_weight), k=1
-    )
-    return nearest.astype(np.int32), n
-
-
-def best_depth_weight(
-    records, weights=DEPTH_WEIGHT_SCAN, working_point: float = 0.5
-) -> tuple[float, dict[float, float]]:
-    """Pick the depth weight that maximises the ceiling, over a small scan.
-
-    A ceiling that has not been maximised over its own free parameters is not a ceiling, it is
-    one arbitrary algorithm; scanning is what earns the name. The criterion is the mean energy
-    efficiency, which is continuous and so does not depend on where a working point is put.
-
-    Args:
-        records: a sequence of event records, normally a subset -- the optimum is stable long
-            before the full evaluation window.
-        weights: depth weights to try.
-        working_point: unused by the criterion, accepted so callers can pass it uniformly.
-
-    Returns:
-        ``(best_weight, {weight: mean efficiency})``.
-    """
-    from src.evaluation.metrics import score_event
-
-    scores: dict[float, float] = {}
-    for weight in weights:
-        total = 0.0
-        count = 0
-        for record in records:
-            geometry = particle_geometry(record)
-            label, n = geometric_labels(record, geometry, depth_weight=weight)
-            particles, _, _ = score_event(record, label, n, algo="geometric")
-            total += float(particles["eff_e"].sum())
-            count += len(particles)
-        scores[weight] = total / max(count, 1)
-    return max(scores, key=lambda w: scores[w]), scores
-
-
-#: Kept so existing callers and tables that name the angle-only version still resolve.
-seeded_labels = geometric_labels
 
 
 def unresolvable_groups(record, fraction: float = 0.5) -> np.ndarray:

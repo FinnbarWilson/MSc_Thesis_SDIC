@@ -1,12 +1,16 @@
 """The cross-subsystem linking stage.
 
-Built on a synthetic record rather than a store, so these run anywhere.
+Built on a synthetic record rather than a store, so these need no event store. They do need
+CLUEstering, because src.clue.pipeline imports it at module scope -- skipped without it, the
+same way tests/test_clue_periodic.py does, so `pytest` still runs on a bare clone.
 """
 
 import numpy as np
 import pytest
 
-from src.clue.pipeline import link_across_subsystems
+pytest.importorskip("CLUEstering", reason="CLUEstering is not installed; see environment.yml")
+
+from src.clue.pipeline import link_across_subsystems  # noqa: E402
 
 
 class FakeRecord:

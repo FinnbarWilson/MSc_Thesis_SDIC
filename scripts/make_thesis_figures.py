@@ -7,26 +7,18 @@
 Writes figures/thesis/*.pdf|png -- one directory, because these are cross-dataset and do not
 belong under either dataset's own folder.
 
-WHAT IS HERE AND WHAT IS NOT
+WHAT IS HERE
 
-Eight figures, of which seven are used by the results and discussion chapters:
+Eight figures, and they are the eight the thesis uses -- nothing here is drawn and unused:
 
   1 eff_purity      efficiency and purity against particle pT
   2 cluster_size    cluster size against shower size, and cells recovered -- fragmenting vs merging
   3 shower_profile  where in the shower the energy is lost: transverse, then longitudinal
   4 response        energy response and resolution -- bias against variance
-  5 energy_budget   the three fates of a particle's energy; demoted to a table in the results
+  5 energy_budget   the three fates of a particle's energy
   6 particle_class  efficiency and fragmentation per particle type
-  7 isolation       efficiency against crowding, with the reference ceilings
+  7 isolation       efficiency against crowding, with the resolution ceiling
   8 jets            do the per-cluster errors survive into an observable
-
-Everything else that exists under figures/<dataset>/ is either methodology (the working-point
-scan, the weighting comparison), a duplicate of one of these at lower information density (the
-shower map, the split/merge and efficiency decompositions), or dead (the incidence-head
-comparison, which needs a checkpoint that has one). They belong in an appendix or nowhere.
-
-The six training interventions and eleven post-processing methods are a TABLE, not a figure.
-Seventeen arms with controls do not plot legibly and read perfectly well as rows.
 
 DATA SOURCES, AND WHY THERE IS A SUMMARY BETWEEN THEM AND THE FIGURES
 
@@ -44,10 +36,10 @@ history for either dataset. The summary is small enough to commit, so `git push`
 What still needs local data, and so is rebuilt only for the ACTIVE dataset:
 
   results/<ds>/anatomy_particles.parquet   figures 2-3; needs cell positions from the event store
-  results/<ds>/jets.parquet                figure 6; anti-k_t jets per event
+  results/<ds>/jets.parquet                figure 8; anti-k_t jets per event
 
 Both are caches rather than results (--rebuild-anatomy / --rebuild-jets), and both are folded into
-the summary, so a machine holding only the summary still draws all six figures. A machine that HAS
+the summary, so a machine holding only the summary still draws all eight figures. A machine that HAS
 the per-row tables always rebuilds the summary rather than trusting the committed one: local tables
 are the fresher artefact, and a stale summary quietly surviving a rescore is the failure mode this
 arrangement is meant to prevent.
@@ -65,28 +57,16 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from src.config import CONFIG_PATH, settings, store_expectations, store_path
+from src.config import settings, store_expectations, store_path
 from src.evaluation.differential import clopper_pearson
 from src.evaluation import anatomy as an
 from src.evaluation import jets as jt
 from src.evaluation.matching import hungarian_match, overlap_matrix
 from src.io.event_store import EventStore
 from src.plotting import thesis as th
-from src.postproc import chain_labels
 
-#: The comparison the thesis actually makes: one learned method against one classical one.
-#:
-#: `maskformer_chained` is DELIBERATELY ABSENT. It is a hand-tuned geometric post-process with its
-#: own free parameter, so putting it in the headline turns "learned model vs tuned classical
-#: algorithm" into "learned model plus classical post-process vs classical algorithm" -- a
-#: different question. Its +0.09 efficiency also comes with median response 1.8 at 0.7 GeV, i.e.
-#: clusters holding nearly twice their particle's energy, which an efficiency number hides.
-#:
-#: It belongs in the interventions table, where the gain and its cost sit side by side. Pass
-#: --with-chaining to draw it anyway; the value of the post-processing is as EVIDENCE that the
-#: masks are fragmented geometrically, not as a competing method.
-METHODS_MAIN = ("maskformer", "clue")
-METHODS = METHODS_MAIN
+#: The comparison the thesis makes: one learned method against one classical one.
+METHODS = ("maskformer", "clue")
 OUT = Path("figures/thesis")
 
 
@@ -104,12 +84,9 @@ def _labels(record, method, cfg, clue_params):
         return cluster_event(record, clue_params, coords=cfg["clue"]["coords"],
                              backend=cfg["clue"]["backend"], min_cluster_hits=cfg["metrics"]["min_cluster_hits"],
                              link_radius=cfg["clue"].get("link_radius", 0.0))
-    label, n = record.maskformer_labels(mask_threshold=mf["mask_threshold"], object_threshold=mf["object_threshold"],
-                                        min_cluster_hits=cfg["metrics"]["min_cluster_hits"])
-    if method == "maskformer_chained":
-        return chain_labels(record, label, n, link_distance=mf["chain_link_distance"],
-                            min_cluster_hits=cfg["metrics"]["min_cluster_hits"])
-    return label, n
+    return record.maskformer_labels(mask_threshold=mf["mask_threshold"],
+                                   object_threshold=mf["object_threshold"],
+                                   min_cluster_hits=cfg["metrics"]["min_cluster_hits"])
 
 
 def build_anatomy(dataset: str, cfg, n_events: int) -> pd.DataFrame:
@@ -265,24 +242,10 @@ def profile_with_interval(cells, coord: str, edges: np.ndarray, n_boot: int = 20
 # the numbers a reader sees are the numbers in the file either way.
 #
 # The format is deliberately long/tidy rather than one column per series: adding a method or a
-# panel then costs no schema change, and `algo` carries whatever METHODS held when it was built, so
-# --with-chaining runs round-trip without a special case.
+# panel then costs no schema change.
 
 SUMMARY_NAME = "figure_summary.csv"
 SUMMARY_COLS = ("dataset", "figure", "panel", "algo", "x", "y", "lo", "hi")
-
-#: Particle-class codes, and the ONE place they may be read from.
-#:
-#: These are the store's own `particle_class_codes`, which the dump writes into its metadata. A
-#: SECOND and DIFFERENT ordering exists on the analysis side; decoding with that one silently
-#: relabels charged hadrons as electrons, which is the kind of error that survives review because
-#: every plot still looks plausible. Validated below against the store's map whenever one is open.
-#:
-#: Classes absent from a ttbar calorimeter sample (tau, neutrino, other) are not plotted; at pu0 the
-#: five below account for all 85,869 targets exactly.
-PARTICLE_CLASSES: Mapping[int, str] = {
-    0: "photon", 1: "electron", 2: "muon", 5: "charged_hadron", 6: "neutral_hadron",
-}
 
 #: The photon/electron split is NOT drawn, and the charged/neutral hadron split IS. The two look
 #: like the same kind of distinction and are not.
@@ -903,15 +866,11 @@ def main() -> None:
                          "on a machine where the analysis was not run.")
     ap.add_argument("--latex", action="store_true",
                     help="render text with a real LaTeX installation (requires one to be present)")
-    ap.add_argument("--with-chaining", action="store_true",
-                    help="also draw maskformer_chained; off by default, see METHODS_MAIN")
     args = ap.parse_args()
 
     import matplotlib.pyplot as _plt
 
     globals()["plt"] = _plt
-    if args.with_chaining:
-        globals()["METHODS"] = ("maskformer", "maskformer_chained", "clue")
     th.apply(latex=True if args.latex else None)
     OUT.mkdir(parents=True, exist_ok=True)
 

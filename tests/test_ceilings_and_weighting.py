@@ -11,12 +11,10 @@ that would fail if the change were silently reverted.
     disagree, and the test constructs the case where they do -- a cluster taking many cells
     but almost no energy -- rather than asserting on real data where the difference could
     come from anywhere.
-*   The references. The geometric one has to be beatable by perfect assignment and the
-    resolution one has to behave like a ceiling, so the properties asserted are structural:
-    efficiency near 1 for the resolution reference, and a purity below 1.
+*   The resolution reference. It has to behave like a ceiling, so the properties asserted are
+    structural: efficiency near 1, and a purity below 1.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -24,13 +22,7 @@ import pytest
 from src.evaluation.differential import binned_fraction
 from src.evaluation.matching import contamination, fragmentation, hungarian_match
 from src.evaluation.metrics import score_event
-from src.evaluation.oracle import (
-    geometric_labels,
-    particle_geometry,
-    resolution_labels,
-    unresolvable_groups,
-)
-from src.io.event_store import EventStore
+from src.evaluation.oracle import particle_geometry, resolution_labels, unresolvable_groups
 from tests.conftest import open_smoke_store
 
 # The store path, the skip and the caching all live in tests/conftest.py, so that
@@ -120,54 +112,6 @@ def test_response_matched_is_bounded_but_response_is_not():
 
 
 # --- the reference clusterings ---------------------------------------------
-
-
-def test_geometric_ceiling_produces_one_cluster_per_particle():
-    store = _store()
-    for record in store:
-        label, n = geometric_labels(record, depth_weight=0.8)
-        assert n == record.n_particles
-        # Every cell is assigned: an idealised method has no noise category, and leaving one
-        # out would hand it a purity advantage the real methods do not have.
-        assert (label >= 0).all()
-
-
-def test_geometric_ceiling_bounds_its_own_class_but_not_perfect_assignment():
-    """It bounds spatial clustering, not clustering in general -- truth still beats it."""
-    store = _store()
-    record = store[0]
-    geometric, n_geometric = geometric_labels(record, depth_weight=0.8)
-    p_geometric, _, _ = score_event(record, geometric, n_geometric, algo="oracle_geometric")
-    p_perfect, _, _ = score_event(record, record.truth_label, record.n_particles, algo="truth")
-    assert p_geometric["eff_e"].mean() < p_perfect["eff_e"].mean()
-
-
-def test_depth_raises_the_geometric_ceiling():
-    """The reason for adding depth: an angle-only reference is unfair to a depth-aware method.
-
-    Asserted as an inequality rather than against the measured 0.530 -> 0.591, so the test
-    tracks the property rather than one sample's numbers.
-    """
-    store = _store()
-    record = store[0]
-    scores = {}
-    for weight in (0.0, 0.8):
-        label, n = geometric_labels(record, depth_weight=weight)
-        particles, _, _ = score_event(record, label, n, algo="oracle_geometric")
-        scores[weight] = particles["eff_e"].mean()
-    assert scores[0.8] > scores[0.0]
-
-
-def test_extreme_depth_weight_degrades_the_assignment():
-    """A shower is a ray, so a large depth weight slices it rather than separating neighbours."""
-    store = _store()
-    record = store[0]
-    scores = {}
-    for weight in (0.8, 25.6):
-        label, n = geometric_labels(record, depth_weight=weight)
-        particles, _, _ = score_event(record, label, n, algo="oracle_geometric")
-        scores[weight] = particles["eff_e"].mean()
-    assert scores[25.6] < scores[0.8]
 
 
 def test_resolution_reference_recovers_almost_everything():

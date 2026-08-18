@@ -93,7 +93,7 @@ Analysis env ready:  $ENV_ANALYSIS
 Use it from the repository root, e.g.
 
     $ENV_ANALYSIS/bin/python -m scripts.show_config
-    $ENV_ANALYSIS/bin/python -m scripts.make_figures
+    $ENV_ANALYSIS/bin/python -m scripts.make_thesis_figures --datasets pu0 pu200 --from-summary
 
 or activate it:
 

@@ -173,8 +173,8 @@ def results_dir(create: bool = True) -> Path:
 
     Scoped by dataset rather than tagged within one directory, because the tables are read
     back by name (``particles_clue.parquet``) and a pu200 run writing beside a pu0 one would
-    silently replace it -- and, worse, ``make_figures`` would then draw one figure from two
-    pileup conditions without anything looking wrong.
+    silently replace it -- and, worse, ``make_thesis_figures`` would then draw one column from
+    two pileup conditions without anything looking wrong.
     """
     path = RESULTS_ROOT / active_dataset()
     if create:

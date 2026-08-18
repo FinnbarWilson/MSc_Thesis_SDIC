@@ -1,4 +1,6 @@
-"""Tuning CLUE's parameters with Optuna, against the same scorer that reports the result.
+"""CLUE's parameter search space and Optuna objective, driven by `scripts.tune_clue`.
+
+The objective is scored against the same code that reports the result.
 
 Tuning toward one quantity and reporting another leaves the reported number optimised for
 nothing, so the objective here calls :func:`~src.evaluation.metrics.score_event` -- literally
@@ -23,12 +25,9 @@ sub-problem rather than a defect: it asks "given only these cells, how well can 
 the part of each shower that lives here?", which is exactly what a per-subsystem density radius
 should be chosen on. Stitching the parts back together is a different question with its own
 single parameter, `clue.link_radius`, and it CANNOT be tuned in this loop because it is
-cross-subsystem by definition. **It needs its own scan over the tuning window after this one
-converges**; until that exists, the configured value is a placeholder and no CLUE number is
-final. See :func:`src.clue.pipeline.link_across_subsystems`.
-
-The jet objective that used to live here is gone with the rest of the jet work; it will come
-back when the `particle_min_pt` question is settled.
+cross-subsystem by definition. It gets its own scan over the same tuning window --
+`scripts.scan_link_radius`, whose result is `results/<ds>/link_radius_scan.parquet`. See
+:func:`src.clue.pipeline.link_across_subsystems`.
 """
 
 from collections.abc import Mapping, Sequence

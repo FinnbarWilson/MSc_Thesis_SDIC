@@ -194,32 +194,3 @@ def cluster_shape(record, label: np.ndarray, n_clusters: int) -> dict[str, np.nd
 def truth_shape(record) -> dict[str, np.ndarray]:
     """The same extents for the truth partition, as the target the methods are read against."""
     return cluster_shape(record, record.truth_label, record.n_particles)
-
-
-def overlap_usage(record, mask_threshold: float, object_threshold: float) -> dict[str, float]:
-    """Does the model actually claim a shared cell with more than one query?
-
-    The architectural argument for a set-prediction model over a partition is that its masks are
-    produced independently, so a cell holding two particles' energy can be claimed twice. CLUE
-    cannot represent that at all. This measures whether the freedom is used, which is a different
-    question from whether it exists -- the mask head is trained against an EXCLUSIVE target, so
-    it has every incentive to collapse to a partition in practice.
-
-    Returns the fraction of multi-owner truth cells claimed by >= 2 queries, the same fraction
-    over all cells, and the truth multi-owner rate for reference.
-    """
-    # `_mask_claims` is a dense [n_queries, n_hits] bool; summing the query axis gives how many
-    # accepted queries claim each cell. There is no public accessor for it, and the whole point
-    # of this measurement is the multiplicity the public exclusive-label API throws away.
-    claims = record._mask_claims(mask_threshold, object_threshold).sum(axis=0)  # noqa: SLF001
-    # Owners per cell straight from the CSR column index: each entry is one (particle, cell)
-    # contribution, so counting occurrences of a cell counts its contributing particles.
-    n_owners = np.bincount(record.truth_indices, minlength=record.n_hits)[: record.n_hits]
-    shared = n_owners >= 2
-    out = {
-        "truth_shared_frac": float(shared.mean()) if record.n_hits else 0.0,
-        "claimed_twice_frac": float((claims >= 2).mean()) if record.n_hits else 0.0,
-    }
-    out["claimed_twice_given_shared"] = float((claims[shared] >= 2).mean()) if shared.any() else 0.0
-    out["claimed_twice_given_single"] = float((claims[~shared] >= 2).mean()) if (~shared).any() else 0.0
-    return out

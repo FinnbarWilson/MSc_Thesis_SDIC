@@ -13,14 +13,12 @@ exactly 1 here would mean the denominator had been quietly restricted to target 
 which would flatter both algorithms.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from src.evaluation.matching import contamination, fragmentation, hungarian_match, overlap_matrix
 from src.evaluation.metrics import local_density, score_event
-from src.io.event_store import EventStore
 from tests.conftest import open_smoke_store
 
 # The store path, the skip and the caching all live in tests/conftest.py, so that

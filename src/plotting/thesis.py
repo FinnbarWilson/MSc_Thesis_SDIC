@@ -1,10 +1,9 @@
-"""The thesis figure set: five figures that carry the argument, and nothing else.
+"""Styling and binning for the eight thesis figures, which `scripts.make_thesis_figures` draws.
 
-SEPARATE FROM `figures.py` ON PURPOSE. That module is the working set -- one figure per
-deliverable, built while the analysis was still open, and it carries styling decisions
-(a custom palette, a grid, a legend placement) that were right for reading on screen. These are
-for a 12pt A4 document with 1 inch margins, at 0.8 of a 6.5 inch textwidth, and they use plain
-scienceplots so the figures look like the rest of the literature rather than like this project.
+These are sized for a 12pt A4 document with 1 inch margins, at 0.8 of a 6.5 inch textwidth, and
+they use plain scienceplots so the figures look like the rest of the literature rather than like
+this project. `src.plotting.style` is the separate, smaller styling for the dataset-composition
+figures, which are not in the thesis.
 
 LAYOUT CONTRACT
 
@@ -30,9 +29,9 @@ and particle energy on the same axis. Every energy axis here is the truth, and e
 quantity is taken from the cluster MATCHED to that particle, so a reader never has to ask which
 energy is meant.
 
-COLOURS come from the scienceplots cycle, assigned by position in `ALGOS`. Nothing is
-hand-picked: the methods take the first colours of the cycle in a fixed order, so the identity is
-stable across figures without importing a second palette's taste.
+COLOURS come from the scienceplots cycle, assigned by role rather than hand-picked: each method
+takes a fixed position in the cycle, so its identity is stable across figures without importing a
+second palette's taste.
 """
 
 from __future__ import annotations
@@ -46,21 +45,16 @@ import numpy as np
 WIDE = (5.2, 2.7)
 TALL = (5.2, 4.6)
 
-#: Plot order, which is also colour order in the scienceplots cycle. References last so they take
-#: the greys the cycle ends with, and read as context rather than as competitors.
-ALGOS: tuple[str, ...] = ("maskformer", "maskformer_chained", "clue", "oracle_geometric", "oracle_resolution")
 LABELS: Mapping[str, str] = {
     "maskformer": "MaskFormer",
-    "maskformer_chained": "MaskFormer + chaining",
     "clue": "CLUE",
-    "oracle_geometric": "Geometric ceiling",
     "oracle_resolution": "Resolution ceiling",
 }
 MARKERS: Mapping[str, str] = {
-    "maskformer": "o", "maskformer_chained": "P", "clue": "s",
-    "oracle_geometric": "D", "oracle_resolution": "v",
+    "maskformer": "o", "clue": "s",
+    "oracle_resolution": "v",
 }
-REFERENCES = frozenset({"oracle_geometric", "oracle_resolution"})
+REFERENCES = frozenset({"oracle_resolution"})
 DATASETS: tuple[str, ...] = ("pu0", "pu200")
 DATASET_LABELS: Mapping[str, str] = {"pu0": "pileup 0", "pu200": "pileup 200"}
 
@@ -128,12 +122,10 @@ def apply(latex: bool | None = None) -> None:
     cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     # Assigned by ROLE, not by position in a list, so removing a method does not repaint the
     # others. The two carrying the comparison take scienceplots' blue and green -- the cycle's
-    # first two and the pair that reads best together; chaining takes orange only when drawn.
+    # first two and the pair that reads best together.
     _COLOURS = {
         "maskformer": cycle[0],        # blue
         "clue": cycle[1],              # green
-        "maskformer_chained": cycle[2],  # orange
-        "oracle_geometric": "#5A5A5A",
         "oracle_resolution": "#9E9E9E",
     }
 
@@ -299,20 +291,6 @@ def binned_ratio(x, numerator, denominator, events, bins, n_boot: int = 200,
         los.append(float(np.nanpercentile(draws, 16)))
         his.append(float(np.nanpercentile(draws, 84)))
     return np.array(cs), np.array(rs), np.array(los), np.array(his)
-
-
-def binned(x: np.ndarray, y: np.ndarray, bins: np.ndarray, statistic: str = "mean", min_count: int = 20):
-    """(centre, value) per bin, dropping bins too sparse to plot honestly."""
-    idx = np.digitize(x, bins) - 1
-    cs, vs = [], []
-    for b in range(len(bins) - 1):
-        sel = (idx == b) & np.isfinite(y)
-        if sel.sum() < min_count:
-            continue
-        cs.append(np.sqrt(bins[b] * bins[b + 1]))
-        v = y[sel]
-        vs.append(np.median(v) if statistic == "median" else float(np.mean(v)))
-    return np.array(cs), np.array(vs)
 
 
 def figsize_for(nrows: int, ncols: int) -> tuple[float, float]:

@@ -16,14 +16,16 @@ layer geometry and the selection cuts all travel inside the store as metadata, a
 :class:`EventStore` checks them against what the experiment config expects rather than
 restating them.
 
-A note on the MaskFormer output, since :class:`EventRecord` offers four ways to turn it into
-clusters and the choice is a physics decision rather than a detail. The model has two heads.
-The **mask** head scores each (query, cell) pair independently through a sigmoid: a detection
-score, with nothing in its loss relating one cell's claims to each other. The **incidence**
-head softmaxes over queries within a cell and is trained against ``I_ia = E_ia / E_i``: a
-share of that cell's energy. Both an exclusive labelling and a fractional one can be built
-from either head, which is the 2x2 the methods below cover. The incidence-based ones need a
-format-2 store.
+A note on the MaskFormer output. Cell membership comes from the **mask** head, which scores
+each (query, cell) pair independently through a sigmoid: a detection score, with nothing in its
+loss relating one cell's claims to each other. :meth:`EventRecord.maskformer_labels` resolves
+each contested cell to a single winner, which is what CLUE can also express and so what the
+head-to-head runs on; :meth:`EventRecord.maskformer_soft_masks` keeps the fractional claims for
+the multi-owner study.
+
+The stores also carry width-0 ``mf_incidence_*`` arrays. Neither model in this thesis has an
+incidence head -- see the comment in `hepattn_colliderml/configs/pu0.yaml` -- so the fields
+exist only because this reader mirrors the on-disk format, and nothing reads them.
 """
 
 import json
@@ -33,10 +35,8 @@ from pathlib import Path
 
 import numpy as np
 
-# Version 2 adds the incidence head (`mf_incidence_*`). Version 1 stores are still readable
-# -- everything that was in them still means the same thing -- but they carry masks only, so
-# the incidence-based labellings below raise on one rather than silently falling back to the
-# mask head and reporting the difference between two methods as zero.
+# Version 2 added the `mf_incidence_*` arrays. Version 1 stores are still readable: everything
+# in them still means the same thing, and nothing here reads the incidence arrays anyway.
 SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2})
 
 # Mirrors format.py. Only used to decode; the authoritative values travel in the metadata
@@ -269,119 +269,6 @@ class EventRecord:
         label[cols] = compact.astype(np.int32)
         return label, int(used.size)
 
-    @property
-    def has_incidence(self) -> bool:
-        """Whether this store carries the incidence head at all."""
-        return bool(self.mf_incidence_query.size) and self.mf_incidence_query.shape[1] > 0
-
-    def _require_incidence(self) -> None:
-        if not self.has_incidence:
-            msg = (
-                "this event store has no incidence head. It is either format version 1 or was "
-                "dumped from a checkpoint without an IncidenceRegressionTask. Re-dump with a "
-                "current hepattn eval/dump.py to score the incidence-based labellings."
-            )
-            raise EventStoreMismatchError(msg)
-
-    def _claimed_cells(self, mask_threshold: float, object_threshold: float) -> np.ndarray:
-        """Cells claimed by at least one accepted query, by the mask head.
-
-        This is the DETECTION half of the two heads, factored out because the incidence
-        labellings reuse it unchanged. Keeping detection identical is what makes them a
-        controlled comparison against :meth:`maskformer_labels`: total claimed energy is the
-        same, so any difference in the metrics is the assignment rule and nothing else.
-        """
-        code = logit_code_for_threshold(mask_threshold)
-        claimed = np.zeros(self.n_hits, dtype=bool)
-        n_q = int(self.mf_valid_prob.size)
-        if n_q == 0 or self.mf_indices.size == 0:
-            return claimed
-        rows = np.repeat(np.arange(n_q), np.diff(self.mf_indptr))
-        keep = (self.mf_logit_u8 >= code) & (self.mf_valid_prob[rows] >= object_threshold)
-        claimed[self.mf_indices[keep]] = True
-        return claimed
-
-    def maskformer_incidence_labels(
-        self,
-        mask_threshold: float,
-        object_threshold: float,
-        min_cluster_hits: int = 1,
-        incidence_floor: float = 0.0,
-        restrict_to_mask: bool = False,
-    ) -> tuple[np.ndarray, int]:
-        """Exclusive labels using the incidence head to decide ownership.
-
-        :meth:`maskformer_labels` resolves a contested cell by the highest mask logit. That
-        rule reads the wrong quantity. The mask head emits an independent sigmoid per
-        (query, cell) and nothing in its loss makes one cell's claims sum to anything, so a
-        mask probability is a detection score and not a share of a cell. The incidence head
-        softmaxes over queries and is trained by KL divergence against ``I_ia = E_ia / E_i``,
-        which is exactly "how much of this cell is that particle's".
-
-        The split of labour here follows that difference, and it is why this is not a step
-        towards hard borders. Detection stays with the mask head, unchanged, so the same
-        cells are claimed and the same 63% of sub-threshold deposits are declined -- the
-        incidence softmax sums to one over queries for *every* cell and on its own could
-        never reject anything. Only the question "whose is it" moves, to the head that was
-        taught to answer it in fractions.
-
-        Args:
-            mask_threshold: minimum mask probability for a cell to be claimed at all.
-            object_threshold: minimum object-head probability for a query to count.
-            min_cluster_hits: clusters smaller than this are dropped.
-            incidence_floor: a cell whose best share is below this is left unclaimed. 0
-                assigns every detected cell, which is the setting comparable to CLUE.
-            restrict_to_mask: when True the winner must also be a query whose *mask* claims
-                the cell. A control rather than a working point: it separates "the incidence
-                head assigns detected cells better" from "the incidence head reaches cells the
-                mask head gave to nobody".
-
-        Returns:
-            ``(label, n_clusters)`` as in :meth:`maskformer_labels`.
-        """
-        self._require_incidence()
-        label = np.full(self.n_hits, -1, dtype=np.int32)
-        claimed = self._claimed_cells(mask_threshold, object_threshold)
-        if not claimed.any():
-            return label, 0
-
-        query = self.mf_incidence_query.astype(np.int64)
-        share = self.mf_incidence_share.astype(np.float64)
-
-        # Disqualify padding and queries the object head rejects, then optionally anything the
-        # mask head did not put on this cell. A disqualified entry gets share -1 so it can
-        # never win an argmax, which keeps this branch-free over ~24k cells.
-        eligible = query >= 0
-        eligible &= self.mf_valid_prob[np.clip(query, 0, None)] >= object_threshold
-        if restrict_to_mask:
-            eligible &= self._mask_claims(mask_threshold, object_threshold)[
-                np.clip(query, 0, None), np.arange(self.n_hits)[:, None]
-            ]
-
-        share = np.where(eligible, share, -1.0)
-        best = share.argmax(axis=1)
-        rows = np.arange(self.n_hits)
-        winner = query[rows, best]
-        winning_share = share[rows, best]
-
-        take = claimed & (winning_share >= max(incidence_floor, 0.0)) & (winning_share >= 0.0) & (winner >= 0)
-        if not take.any():
-            return label, 0
-
-        cols = np.flatnonzero(take)
-        rows = winner[cols]
-
-        if min_cluster_hits > 1:
-            counts = np.bincount(rows, minlength=int(self.mf_valid_prob.size))
-            big = counts[rows] >= min_cluster_hits
-            rows, cols = rows[big], cols[big]
-            if rows.size == 0:
-                return label, 0
-
-        used, compact = np.unique(rows, return_inverse=True)
-        label[cols] = compact.astype(np.int32)
-        return label, int(used.size)
-
     def _mask_claims(self, mask_threshold: float, object_threshold: float) -> np.ndarray:
         """Dense `[n_queries, n_hits]` boolean of which accepted query claims which cell.
 
@@ -397,61 +284,6 @@ class EventRecord:
         keep = (self.mf_logit_u8 >= code) & (self.mf_valid_prob[rows] >= object_threshold)
         dense[rows[keep], self.mf_indices[keep]] = True
         return dense
-
-    def maskformer_incidence_soft_masks(
-        self,
-        mask_threshold: float,
-        object_threshold: float,
-        min_cluster_hits: int = 1,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-        """Fractional claims on each cell, weighted by the incidence head.
-
-        The counterpart of :meth:`maskformer_soft_masks`, and the one the capability study
-        should be reading. That method divides a contested cell in proportion to *mask
-        probabilities*, which measures the model's overlap handling with a quantity never
-        trained to divide a cell -- the measured symptom being that it splits each cell 2.04
-        ways against truth's 1.22, an over-division that survives every mask threshold up to
-        0.95. Incidence shares are trained against the true energy fractions, so this asks
-        the capability question with the calibrated quantity.
-
-        Detection is again the mask head's, so the set of claimed cells matches the rest of
-        the MaskFormer numbers and only the division changes.
-
-        Returns:
-            ``(cluster, cell, weight, n_clusters)``, weights summing to 1 over the clusters
-            claiming any given cell.
-        """
-        self._require_incidence()
-        empty = (np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64), np.empty(0), 0)
-        claimed = self._claimed_cells(mask_threshold, object_threshold)
-        if not claimed.any():
-            return empty
-
-        query = self.mf_incidence_query.astype(np.int64)
-        share = self.mf_incidence_share.astype(np.float64)
-        eligible = (query >= 0) & (self.mf_valid_prob[np.clip(query, 0, None)] >= object_threshold)
-        eligible &= claimed[:, None]
-
-        cells, slots = np.nonzero(eligible)
-        if cells.size == 0:
-            return empty
-        rows = query[cells, slots]
-        weight = share[cells, slots]
-
-        if min_cluster_hits > 1:
-            counts = np.bincount(rows, minlength=int(self.mf_valid_prob.size))
-            big = counts[rows] >= min_cluster_hits
-            rows, cells, weight = rows[big], cells[big], weight[big]
-            if rows.size == 0:
-                return empty
-
-        # Renormalise per cell. The store deliberately keeps the raw softmax rather than a
-        # normalised top-k, so the division by the row sum happens here, where k is known.
-        per_cell = np.bincount(cells, weights=weight, minlength=self.n_hits)
-        weight = weight / np.maximum(per_cell[cells], 1e-30)
-
-        used, compact = np.unique(rows, return_inverse=True)
-        return compact.astype(np.int64), cells.astype(np.int64), weight, int(used.size)
 
     def maskformer_soft_masks(
         self,
