@@ -943,7 +943,10 @@ def fig_jets(summary, datasets, out):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--datasets", nargs="+", default=list(th.DATASETS))
-    ap.add_argument("--events", type=int, default=120, help="events for the store-derived figures")
+    ap.add_argument("--events", type=int, default=None,
+                    help="events for the store-derived figures. Defaults to this dataset's "
+                         "windows.eval_events -- the full evaluation window, and what the "
+                         "committed summaries were built over.")
     ap.add_argument("--rebuild-anatomy", action="store_true")
     ap.add_argument("--rebuild-jets", action="store_true")
     ap.add_argument("--from-summary", action="store_true",
@@ -968,6 +971,16 @@ def main() -> None:
             print(f"  ! {ds}: no results/{ds}/ -- skipping this column", flush=True)
             continue
         summary_file = res / SUMMARY_NAME
+
+        # THE EVENT COUNT DEFAULTS TO THE CONFIGURED EVAL WINDOW, and is not a constant. It was a
+        # hardcoded 120 while both datasets set windows.eval_events: 500, so a plain
+        # --rebuild-anatomy quietly recomputed the store-derived rows on a quarter of the
+        # statistics and wrote them over a summary built on the full window -- cluster_size lost
+        # its 100 GeV bin and moved by up to 0.09, with nothing on the page to say why. Deriving
+        # the default from the window the store was dumped over means the two cannot drift apart
+        # again; --events still overrides it for a deliberately quick look.
+        n_events = args.events if args.events is not None else \
+            settings()["dataset"][ds]["windows"]["eval_events"]
 
         # EACH SOURCE IS OPTIONAL AND THEY ARE GATHERED INDEPENDENTLY. The previous version bailed
         # out of the whole dataset the moment particles_*.parquet was missing, which silently threw
@@ -1005,17 +1018,17 @@ def main() -> None:
         # cache to fall back on, so a machine without the store must use --from-summary above.
         jcache = res / "jets.parquet"
         if ds == active and (args.rebuild_jets or not jcache.exists()):
-            print(f"  building jet cache for {ds} ({args.events} events) ...", flush=True)
-            build_jets(ds, settings(), args.events).to_parquet(jcache)
+            print(f"  building jet cache for {ds} ({n_events} events) ...", flush=True)
+            build_jets(ds, settings(), n_events).to_parquet(jcache)
         if jcache.exists():
             jets = pd.read_parquet(jcache)
 
         cache = res / "anatomy_particles.parquet"
         if ds == active:
             if args.rebuild_anatomy or not cache.exists():
-                print(f"  building anatomy cache for {ds} ({args.events} events) ...", flush=True)
-                build_anatomy(ds, settings(), args.events).to_parquet(cache)
-            profiles = load_profiles(ds, settings(), args.events)
+                print(f"  building anatomy cache for {ds} ({n_events} events) ...", flush=True)
+                build_anatomy(ds, settings(), n_events).to_parquet(cache)
+            profiles = load_profiles(ds, settings(), n_events)
         if cache.exists():
             anat = pd.read_parquet(cache)
 
