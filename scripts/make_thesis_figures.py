@@ -598,7 +598,12 @@ def fig_eff_purity(summary, datasets, out):
             ax.set_xscale("log")
             ax.set_ylim(0, 1.02)
     axes[0][0].set_ylabel("efficiency")
-    axes[1][0].set_ylabel("purity")
+    # "matched-cluster", not just "purity". The efficiency row is a rate over ALL targets, with an
+    # unmatched one entering as a zero; the purity row is a rate over the clusters that MATCHED,
+    # so a fake cluster is not in it at all. That asymmetry is the whole of the conditioning
+    # argument in the discussion, and an axis reading "purity" invites it to be read as the
+    # unconditional number, which is 0.29 lower for CLUE.
+    axes[1][0].set_ylabel("matched-cluster purity")
     return th.finish(fig, out)
 
 
@@ -646,10 +651,18 @@ def fig_shower_profile(summary, datasets, out):
 
     The second curve per method is CUMULATIVE -- recovered plus taken by another cluster -- so each
     panel partitions the same way figure 5's stacked bar does: below the lower curve is recovered,
-    between the two is taken by another cluster, and between the upper curve and 1 is energy no
-    cluster claimed. Six independent curves would not close visibly; two curves and a line at unity
-    do. Only the recovered curve carries a band, because it is the one the discussion quotes and
-    two bands per method is more shading than these panels can hold.
+    between the two is taken by another cluster, and above the upper curve is energy no cluster
+    claimed. Six independent curves would not close visibly; two curves per method do. Only the
+    recovered curve carries a band, because it is the one the discussion quotes and two bands per
+    method is more shading than these panels can hold.
+
+    THE KEY IS IN TWO PARTS, and it has to be, because the panel uses two channels at once: COLOUR
+    AND DASH say which method, WEIGHT says which of its two curves. The first version left the
+    faint curve out of the legend entirely, on the reasoning that an entry per method per curve
+    would double the key -- but that left the reader to infer the whole cumulative construction
+    from the drawing, and a figure whose central quantity is only explained in the caption is not
+    doing its job. Two neutral-grey entries name the two curves once, for both methods, so the key
+    grows by two rows rather than by four and nothing on the page is unlabelled.
 
     THE AXES ARE NOT UNIFORM IN ENERGY, and the caption says so, because the figure invites the
     opposite reading. Most of a shower's energy sits in the first two or three dR bins and near the
@@ -664,20 +677,32 @@ def fig_shower_profile(summary, datasets, out):
              ("depth", "layers past shower start")]
         ):
             ax = axes[row][j]
-            _draw_series(ax, summary, ds, "shower_profile", coord)
-            # Thinner, part-transparent, and unlabelled: it is a second reading of the same series
-            # rather than a third method, and a legend entry per method per curve would double the
-            # key for no information.
+            # The recovered curve is the one the discussion quotes, so it is the heavier of the
+            # two and carries the band; the cumulative curve is a second reading of the same
+            # series rather than a third method, so it keeps the method's colour and dash and is
+            # separated by weight alone. Both are named in the key built below.
+            _draw_series(ax, summary, ds, "shower_profile", coord, linewidth=1.3)
             _draw_series(ax, summary, ds, "shower_profile", coord + "_taken", band=False,
-                         linewidth=0.7, alpha=0.55, label="_nolegend_")
-            # Unity is what the pair of curves is read against: the distance from the upper curve
-            # to this line is the energy left in no cluster.
-            ax.axhline(1.0, color="k", lw=0.5, ls=":")
-            ax.set_ylim(0, 1.08)
+                         linewidth=0.6, alpha=0.55, label="_nolegend_")
+            # NO LINE AT UNITY. The fraction cannot exceed 1, so the top of the panel already is
+            # unity and a dotted rule across all four panels only added ink; the axis is left just
+            # above it so the upper curve does not run into the spine.
+            ax.set_ylim(0, 1.04)
             ax.set_xlabel(xlabel)
     axes[0][0].set_ylabel("fraction of the\nshower's energy")
     axes[1][0].set_ylabel("fraction of the\nshower's energy")
-    return th.finish(fig, out, ncol=len(METHODS))
+
+    # THE SECOND HALF OF THE KEY. These two entries describe a WEIGHT that both methods use, so
+    # each is drawn as a key split down its middle: MaskFormer's blue solid on the left half and
+    # CLUE's green dash on the right, at the weight being named. That replaces a neutral grey line
+    # which was in a colour appearing nowhere in the panels and left the reader to infer that it
+    # stood for both methods at once. Appended after the series so the methods stay first, and with
+    # ncol=2 matplotlib fills column-wise -- methods in the left column, curves in the right.
+    extra = [(th.SplitKey(METHODS, linewidth=lw), text)
+             for lw, text in ((1.3, "recovered"), (0.6, "recovered + taken by another cluster"))]
+    # The swatches are widened because each now carries two segments: at the default length CLUE's
+    # half would be too short to show its dash pattern as a dash.
+    return th.finish(fig, out, ncol=len(METHODS), extra=extra, handlelength=3.0)
 
 
 def fig_response(summary, datasets, out):
@@ -718,7 +743,12 @@ def fig_response(summary, datasets, out):
         axes[1][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
         for ax in (axes[0][j], axes[1][j]):
             ax.set_xscale("log")
-    axes[0][0].set_ylabel("median $E_{\\rm reco}/E_{\\rm true}$")
+    # E_dep, NOT E_true. The denominator is the energy the target actually DEPOSITED in the
+    # cells being clustered, which is what src.evaluation.metrics divides by. A particle's true
+    # energy is a different and larger quantity -- it includes what leaked, what fell below zero
+    # suppression, and for a muon nearly all of it -- so labelling this axis E_true would claim a
+    # calorimeter energy scale the figure does not measure.
+    axes[0][0].set_ylabel("median $E_{\\rm reco}/E_{\\rm dep}$")
     axes[1][0].set_ylabel("$\\sigma_E/E$")
     return th.finish(fig, out)
 
@@ -767,15 +797,20 @@ def fig_energy_budget(summary, datasets, out):
             left += v
     ax.set_yticks(y, labels)
     ax.set_xlim(0, 1)
-    ax.set_xlabel("fraction of the particle's deposited energy")
+    # "target" rather than "particle": the denominator is one collapsed TARGET as the thesis
+    # defines it, which is not every simulated particle in the event.
+    ax.set_xlabel("fraction of the target's deposited energy")
     ax.invert_yaxis()
 
-    # Lightness is the variable here, so the key is drawn in a neutral grey at the same three
-    # alphas. Using a method's colour would imply the key belonged to that method.
-    from matplotlib.patches import Patch
-
-    handles = [Patch(facecolor="#333333", alpha=a, label=f) for a, f in zip(alphas, fates, strict=True)]
-    fig.legend(handles, fates, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False)
+    # LIGHTNESS IS THE VARIABLE HERE, and it means the same thing on both methods' bars, so each
+    # key is split down its middle: MaskFormer's blue on the left half, CLUE's green on the right,
+    # both at the fate's alpha. Drawing them in one method's colour would imply the key belonged to
+    # that method; the neutral grey they were drawn in before avoided that but put a colour in the
+    # key that appears nowhere in the bars, leaving the reader to decode it. A swatch made of the
+    # two colours it describes needs no decoding.
+    handles = [th.SplitKey(METHODS, patch=True, alpha=a) for a in alphas]
+    fig.legend(handles, fates, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False,
+               handler_map=th.HANDLER_MAP, handlelength=2.4)
     fig.tight_layout()
     for ext in ("pdf", "png"):
         fig.savefig(out.with_suffix(f".{ext}"))

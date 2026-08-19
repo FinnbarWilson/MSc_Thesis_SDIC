@@ -41,6 +41,9 @@ from collections.abc import Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.legend_handler import HandlerBase
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 
 WIDE = (5.2, 2.7)
 TALL = (5.2, 4.6)
@@ -150,11 +153,83 @@ def draw(ax, algo, x, y, yerr=None, dashed: bool | None = None):
                 alpha=0.75 if ref else 1.0, label=LABELS.get(algo, algo), capsize=0)
 
 
-def legend_below(fig, ncol: int = 3, y: float = 0.0) -> None:
-    """One legend for the whole figure, under it, so no panel loses area to a key."""
+class SplitKey:
+    """A legend key split down the middle, one method's style on each half.
+
+    THE ENTRY THAT BELONGS TO BOTH METHODS IS THE PROBLEM THIS SOLVES. Two figures use a second
+    visual channel on top of colour -- lightness for the three fates in `energy_budget`, weight for
+    the two curves in `shower_profile` -- and that channel means the same thing for MaskFormer and
+    for CLUE. Drawn in either method's colour the key would claim to belong to that method, so both
+    figures previously drew those entries in a neutral dark grey: a swatch in a colour that appears
+    nowhere in the panels, which the reader has to work out is standing in for "either of these".
+
+    A key split down its middle says it directly. The left half is drawn in the first method's
+    colour and style and the right half in the second's, so the swatch is made of exactly the two
+    things it describes and the entry reads as "this, in both colours" without a detour through the
+    caption. `algos` is in the same order as the method entries above it in the key, so left-then-
+    right matches top-then-bottom.
+
+    Args:
+        algos: the methods to split across, left to right.
+        patch: draw filled swatches (a stacked-bar key) rather than line segments.
+        alpha: opacity, for the figure that carries lightness as its second channel.
+        linewidth: line weight, for the figure that carries weight as its second channel.
+    """
+
+    def __init__(self, algos: Sequence[str], *, patch: bool = False, alpha: float = 1.0,
+                 linewidth: float = 1.0):
+        self.algos = tuple(algos)
+        self.patch = patch
+        self.alpha = alpha
+        self.linewidth = linewidth
+
+
+class _SplitKeyHandler(HandlerBase):
+    """Draws a `SplitKey` as n abutting segments across the width of one legend handle."""
+
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize,
+                       trans):
+        artists = []
+        n = len(orig_handle.algos)
+        for i, algo in enumerate(orig_handle.algos):
+            x0 = -xdescent + width * i / n
+            if orig_handle.patch:
+                art = Rectangle((x0, -ydescent), width / n, height, facecolor=colour(algo),
+                                alpha=orig_handle.alpha, linewidth=0)
+            else:
+                y = -ydescent + height / 2
+                art = Line2D([x0, x0 + width / n], [y, y], color=colour(algo),
+                             linestyle=LINESTYLES.get(algo, "-"), linewidth=orig_handle.linewidth,
+                             alpha=orig_handle.alpha)
+            art.set_transform(trans)
+            artists.append(art)
+        return artists
+
+
+#: Passed to every legend these figures draw, so a `SplitKey` handle renders anywhere.
+HANDLER_MAP = {SplitKey: _SplitKeyHandler()}
+
+
+def legend_below(fig, ncol: int = 3, y: float = 0.0, extra=None, handlelength: float | None = None) -> None:
+    """One legend for the whole figure, under it, so no panel loses area to a key.
+
+    Args:
+        extra: ``(handle, label)`` pairs appended after the panel's own entries, for keys that
+            describe a second channel rather than a series -- see `SplitKey`. Passing them here
+            rather than as empty proxy artists on the panel keeps handles that no axes can produce
+            (a split swatch is not something `ax.plot` returns) out of the drawing code.
+        handlelength: widen the swatches, in font-size units. A split key needs the room: at the
+            default 1.5 each half is about six points, which is too little for a dash pattern to
+            show more than one dash.
+    """
     handles, labels = fig.axes[0].get_legend_handles_labels()
+    for handle, label in extra or ():
+        handles.append(handle)
+        labels.append(label)
     if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, y), ncol=ncol, frameon=False)
+        kw = {} if handlelength is None else {"handlelength": handlelength}
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, y), ncol=ncol,
+                   frameon=False, handler_map=HANDLER_MAP, **kw)
 
 
 def band(ax, algo, x, lo, hi):
@@ -409,8 +484,8 @@ def grid(nrows: int, ncols: int, datasets: Sequence[str], sharey: str | bool = "
     return fig, axes
 
 
-def finish(fig, path, ncol: int = 3):
-    legend_below(fig, ncol=ncol)
+def finish(fig, path, ncol: int = 3, extra=None, handlelength: float | None = None):
+    legend_below(fig, ncol=ncol, extra=extra, handlelength=handlelength)
     fig.tight_layout()
     for ext in ("pdf", "png"):
         fig.savefig(path.with_suffix(f".{ext}"))
