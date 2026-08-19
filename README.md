@@ -122,6 +122,36 @@ calo_hits shard of the *same filename* and uses the intersection of the two list
 that downloaded in one collection but not the other is dropped silently — no error, just a lower
 event count than you think you have.
 
+### Trained checkpoints
+
+The MaskFormer checkpoints are **release assets rather than git objects**. Each is ~112 MB and
+GitHub refuses any single file over 100 MB pushed to a repository, so committing one is not merely
+untidy — the push is rejected. Git LFS would take them, but its free tier allows 1 GB of bandwidth
+a month, about four clones once both conditions are published, and someone who only wants to
+redraw the figures should not pay for a 225 MB download at all.
+
+```bash
+python -m scripts.fetch_checkpoints --list           # what exists, and what is already local
+python -m scripts.fetch_checkpoints --datasets pu200
+```
+
+| dataset | run | trained on | published |
+|---|---|---|---|
+| pu200 | `hepattn_20260813-T134117`, `epoch=003-val_loss=2.06527.ckpt` | ce-ai-1 | yes |
+| pu0 | `hepattn_20260813-T145153`, `epoch=005-val_loss=1.65500.ckpt` | DIAS | not yet |
+
+Each lands at the exact path `config/experiment.yaml` already names for it, under the gitignored
+`external/` tree — so nothing in the config changes when one is fetched, and a machine that
+trained its own is configured identically to one that downloaded it. That matters because the
+config's checkpoint path is what ties a result back to the run that produced it.
+
+Every asset carries its SHA-256 in `scripts/fetch_checkpoints.py` and is verified after transfer.
+A local file whose digest disagrees is reported and left alone rather than replaced: that is far
+more likely to be a locally trained checkpoint than a corrupt download.
+
+A checkpoint is only needed to **dump a new event store**. Scoring, the figures and every number
+in `results/` come from a store that already exists.
+
 ### Dump a store, then score it
 
 Store production is the only GPU step; see [`src/maskformer/README.md`](src/maskformer/README.md).
