@@ -48,10 +48,10 @@ REPO = "FinnbarWilson/MSc_Thesis_SDIC"
 class Checkpoint:
     """One published checkpoint.
 
-    `sha256` is None for a checkpoint that has not been published yet -- the pu0 model was trained
-    and dumped on DIAS and has never been on this machine, so its digest cannot be filled in from
-    here. Whoever uploads it replaces the None with the digest `sha256sum` prints, and nothing else
-    about this file needs to change.
+    `sha256` is None for a checkpoint that has not been published yet, which is the state a new
+    entry starts in: a model trained on one machine cannot have its digest filled in from another.
+    Whoever uploads the asset replaces the None with the digest `sha256sum` prints, and nothing
+    else about this file needs to change. Both checkpoints are published as of 2026-08-19.
     """
 
     dataset: str
@@ -78,7 +78,7 @@ CHECKPOINTS: tuple[Checkpoint, ...] = (
         asset="maskformer_pu0.ckpt",
         dest=Path("external/hepattn/src/hepattn/experiments/colliderml/logs"
                   "/hepattn_20260813-T145153/ckpts/epoch=005-val_loss=1.65500.ckpt"),
-        sha256=None,  # trained and dumped on DIAS; not published yet
+        sha256="72a3b058cc540b8fdd65c565ba7354d03fb93ed270c9f7be4e269a0c70225029",
         run="hepattn_20260813-T145153",
         note="6 epochs / 120,000 steps, 400 queries, shower-level truth "
              "(particle_min_num_calohits 10). Trained on DIAS.",
