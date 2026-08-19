@@ -54,6 +54,14 @@ MARKERS: Mapping[str, str] = {
     "maskformer": "o", "clue": "s",
     "oracle_resolution": "v",
 }
+#: Line style per method, which carries the identity once the markers are gone. The binned figures
+#: are drawn as step outlines (see `draw_steps`), where a marker at a bin centre would sit in the
+#: middle of a flat segment and say nothing the segment does not. Two solid steps of similar
+#: lightness are hard to follow where they cross, so the second method is dashed instead.
+LINESTYLES: Mapping[str, str] = {
+    "maskformer": "-", "clue": "--",
+    "oracle_resolution": ":",
+}
 REFERENCES = frozenset({"oracle_resolution"})
 DATASETS: tuple[str, ...] = ("pu0", "pu200")
 DATASET_LABELS: Mapping[str, str] = {"pu0": "pileup 0", "pu200": "pileup 200"}
@@ -159,6 +167,81 @@ def band(ax, algo, x, lo, hi):
     if len(x) == 0:
         return
     ax.fill_between(x, lo, hi, color=colour(algo), alpha=0.18, linewidth=0, zorder=1)
+
+
+def _step_path(lo, hi, y):
+    """A piecewise-constant path over bins, broken by NaN wherever a bin is missing.
+
+    Every quantity in these figures is measured in bins, and a marker at the geometric centre of
+    each bin joined to the next by a straight line says nothing about how wide those bins are. The
+    top edge of a histogram does, and because the measurements move smoothly across the range it
+    still reads as a curve.
+
+    The NaN break is the part that has to be right. `binned_proportion`, `binned_bootstrap` and
+    `binned_ratio` all drop a bin holding fewer than `min_count` entries, so the bins reaching this
+    function are not guaranteed contiguous. A single path drawn through them would put a horizontal
+    segment across a bin that was never measured, which is the one error this style could introduce
+    that a reader could not see. Contiguous runs are therefore emitted separately.
+
+    Args:
+        lo, hi: the lower and upper edge of each bin, in plotting coordinates.
+        y: the value in each bin.
+
+    Returns:
+        ``(x, y)`` arrays for ``ax.plot`` or ``ax.fill_between``.
+    """
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
+    y = np.asarray(y, dtype=float)
+    xs: list[float] = []
+    ys: list[float] = []
+    i, n = 0, len(lo)
+    while i < n:
+        j = i
+        while j + 1 < n and np.isclose(hi[j], lo[j + 1], rtol=1e-9, atol=1e-12):
+            j += 1
+        for k in range(i, j + 1):
+            xs += [lo[k], hi[k]]
+            ys += [y[k], y[k]]
+        xs.append(np.nan)
+        ys.append(np.nan)
+        i = j + 1
+    return np.asarray(xs), np.asarray(ys)
+
+
+def draw_steps(ax, algo, lo, hi, y, dashed: bool | None = None, label: str | None = None,
+               alpha: float = 1.0, linewidth: float = 1.0, linestyle: str | None = None):
+    """One series as the top edge of a histogram. The step replaces `draw`'s markers and line."""
+    ref = algo in REFERENCES if dashed is None else dashed
+    style = linestyle if linestyle is not None else ("--" if ref else LINESTYLES.get(algo, "-"))
+    x, yy = _step_path(lo, hi, y)
+    ax.plot(x, yy, color=colour(algo), linestyle=style, linewidth=linewidth,
+            alpha=0.75 * alpha if ref else alpha,
+            label=LABELS.get(algo, algo) if label is None else label)
+
+
+def band_steps(ax, algo, lo, hi, ylo, yhi, alpha: float = 0.18):
+    """Shade an uncertainty interval over the same bins, so the band steps with the series."""
+    if len(lo) == 0:
+        return
+    x, low = _step_path(lo, hi, ylo)
+    _, high = _step_path(lo, hi, yhi)
+    ax.fill_between(x, low, high, color=colour(algo), alpha=alpha, linewidth=0, zorder=1)
+
+
+def bin_edges_for(x, edges):
+    """(lo, hi) edges of the bin each plotted point came from.
+
+    The summary carries one x per bin rather than the edges, and the two figure families use
+    different conventions for it: the differential figures place a point at the geometric mean of
+    its bin and `anatomy.profile` at the arithmetic midpoint. Both fall strictly inside their own
+    bin, so a single digitize recovers the edges for either without the summary having to grow a
+    column, and without a committed summary from another machine needing to be regenerated.
+    """
+    x = np.asarray(x, dtype=float)
+    edges = np.asarray(edges, dtype=float)
+    idx = np.clip(np.digitize(x, edges) - 1, 0, len(edges) - 2)
+    return edges[idx], edges[idx + 1]
 
 
 def binned_proportion(x, passed, bins, min_count: int = 20):

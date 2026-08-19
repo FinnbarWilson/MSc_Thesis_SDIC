@@ -174,53 +174,83 @@ def load_profiles(dataset: str, cfg, n_events: int):
 
 
 def profile_with_interval(cells, coord: str, edges: np.ndarray, n_boot: int = 200):
-    """(centres, recovered fraction, lo, hi) for a shower profile, resampled over EVENTS.
+    """(centres, {series: (fraction, lo, hi)}) for a shower profile, resampled over EVENTS.
 
-    The profile is a RATIO OF SUMS in each bin -- recovered energy over deposited energy -- so the
-    interval has to be built by resampling whole events and recomputing the ratio, exactly as
-    `th.binned_ratio` does for the cluster-size figure. Resampling cells or particles would
+    The profile is a RATIO OF SUMS in each bin -- energy of a given fate over deposited energy --
+    so the interval has to be built by resampling whole events and recomputing the ratio, exactly
+    as `th.binned_ratio` does for the cluster-size figure. Resampling cells or particles would
     understate it: a shower contributes many correlated cells and an event many correlated showers.
 
     This figure carried no uncertainty at all until now, and the discussion leans on one bin of it
     -- CLUE falling back in the deepest layers -- which is precisely the kind of claim that needs a
     band to be worth making.
+
+    TWO SERIES, NOT ONE, and the second is CUMULATIVE. Drawing only the recovered fraction leaves
+    the rest of each bin unaccounted for, so a reader cannot tell energy the method gave to a
+    neighbouring cluster from energy it left in no cluster at all -- which is the distinction the
+    whole discussion of failure modes rests on, and which figure 5 already makes for the event as a
+    whole. `recovered_taken` is recovered PLUS taken by another cluster, so the two curves and the
+    line at 1 partition each bin into the same three fates as that figure: recovered below the
+    first curve, taken between the two, and unclustered above the second. The cumulative form is
+    what makes that reading work; three independent curves per method would be six lines a panel
+    and would not visibly close.
+
+    Both series come out of one pass. `an.profile` already splits every bin by fate and the
+    bootstrap already builds a per-(event, bin) matrix, so the second series costs one more
+    numerator matrix rather than a second scan over several million cell rows.
     """
     centres, truth, fates = an.profile(cells, coord, edges)
     with np.errstate(invalid="ignore", divide="ignore"):
-        frac = np.where(truth > 0, fates["recovered"] / truth, np.nan)
+        point = {
+            "recovered": np.where(truth > 0, fates["recovered"] / truth, np.nan),
+            "recovered_taken": np.where(
+                truth > 0, (fates["recovered"] + fates["stolen"]) / truth, np.nan),
+        }
 
-    nan = np.full(frac.shape, np.nan)
+    nan = np.full(centres.shape, np.nan)
     if getattr(cells, "event", None) is None:
-        return centres, frac, nan, nan
+        return centres, {k: (v, nan, nan) for k, v in point.items()}
 
     values = getattr(cells, coord)
     idx = np.digitize(values, edges) - 1
     inside = (idx >= 0) & (idx < len(edges) - 1)
     idx, w, fate, ev = idx[inside], cells.deposit[inside], cells.fate[inside], cells.event[inside]
     if idx.size == 0:
-        return centres, frac, nan, nan
+        return centres, {k: (v, nan, nan) for k, v in point.items()}
 
-    # Collapse to a (event x bin) pair of matrices once; a resample is then a row gather and a
+    # Collapse to a (event x bin) set of matrices once; a resample is then a row gather and a
     # column sum rather than a rescan of several million cell rows.
     uniq, row = np.unique(ev, return_inverse=True)
     nb = len(edges) - 1
     dep = np.zeros((uniq.size, nb))
-    rec = np.zeros((uniq.size, nb))
+    num = {k: np.zeros((uniq.size, nb)) for k in point}
     np.add.at(dep, (row, idx), w)
-    np.add.at(rec, (row, idx), np.where(fate == 0, w, 0.0))
+    np.add.at(num["recovered"], (row, idx), np.where(fate == 0, w, 0.0))
+    np.add.at(num["recovered_taken"], (row, idx), np.where(fate <= 1, w, 0.0))
 
-    rng = np.random.default_rng(0)
-    boot = np.empty((n_boot, nb))
-    for b in range(n_boot):
-        pick = rng.integers(0, uniq.size, uniq.size)
-        d, r = dep[pick].sum(0), rec[pick].sum(0)
-        with np.errstate(invalid="ignore", divide="ignore"):
-            boot[b] = np.where(d > 0, r / d, np.nan)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN column when a bin is empty
-        lo = np.nanpercentile(boot, 15.865, axis=0)
-        hi = np.nanpercentile(boot, 84.135, axis=0)
-    return centres, frac, lo, hi
+    out = {}
+    for name, value in point.items():
+        rng = np.random.default_rng(0)
+        boot = np.empty((n_boot, nb))
+        for b in range(n_boot):
+            pick = rng.integers(0, uniq.size, uniq.size)
+            d, r = dep[pick].sum(0), num[name][pick].sum(0)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                boot[b] = np.where(d > 0, r / d, np.nan)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN column when a bin is empty
+            lo = np.nanpercentile(boot, 15.865, axis=0)
+            hi = np.nanpercentile(boot, 84.135, axis=0)
+        out[name] = (value, lo, hi)
+
+    # The three fates are exhaustive per cell, so the cumulative curve cannot exceed 1 and cannot
+    # sit below the recovered one. A figure that silently failed either would be entirely plausible
+    # on the page, which is the same reason fig_energy_budget asserts its own decomposition.
+    rec, tak = point["recovered"], point["recovered_taken"]
+    ok = np.isfinite(rec) & np.isfinite(tak)
+    assert np.all(tak[ok] >= rec[ok] - 1e-9), "recovered exceeds recovered+taken in some bin"
+    assert np.all(tak[ok] <= 1.0 + 1e-9), "recovered+taken exceeds the deposited energy in some bin"
+    return centres, out
 
 
 # ------------------------------------------------------------------ the figure summary
@@ -455,12 +485,16 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
                                            s.n_true.to_numpy(), s.sample_id.to_numpy(), th.E_BINS)
             rows += _rows(ds, "cluster_size", "size_ratio", algo, x, y, lo, hi)
 
-    # 3 shower_profile: fraction of energy recovered against two shower-frame coordinates.
+    # 3 shower_profile: where a target's energy went, against two shower-frame coordinates. The
+    # `_taken` panel is CUMULATIVE (recovered plus taken by another cluster), so the pair of curves
+    # closes each bin against 1 -- see profile_with_interval.
     if profiles is not None:
         for panel, edges in (("dr", an.DR_EDGES), ("depth", an.DEPTH_EDGES)):
             for algo in METHODS:
-                c, frac, lo, hi = profile_with_interval(profiles[algo], panel, edges)
-                rows += _rows(ds, "shower_profile", panel, algo, c, frac, lo, hi)
+                c, out = profile_with_interval(profiles[algo], panel, edges)
+                for name, suffix in (("recovered", ""), ("recovered_taken", "_taken")):
+                    frac, lo, hi = out[name]
+                    rows += _rows(ds, "shower_profile", panel + suffix, algo, c, frac, lo, hi)
 
     # 6 jets. x is the REFERENCE jet pt throughout, so every row is binned by the same
     # method-independent quantity.
@@ -496,15 +530,35 @@ def series(summary, ds, figure, panel, algo):
     return s.x.to_numpy(), s.y.to_numpy(), s.lo.to_numpy(), s.hi.to_numpy()
 
 
-def _draw_series(ax, summary, ds, figure, panel):
-    """Draw every method's series for one panel, band first so the lines sit on top."""
+#: The bin edges each (figure, panel) was measured over, so a series can be drawn as the top edge
+#: of a histogram rather than as a line through bin centres. Every one of these is already a module
+#: constant used by build_summary; the registry only records which figure used which, which the
+#: summary itself does not carry. Keeping it here rather than adding xlo/xhi columns means a
+#: committed figure_summary.csv from another machine redraws in the new style unchanged.
+EDGES: Mapping[tuple[str, str], np.ndarray] = {
+    **{("eff_purity", p): th.E_BINS for p in ("efficiency", "purity")},
+    **{("cluster_size", p): th.E_BINS for p in ("size", "size_ratio")},
+    **{("response", p): th.E_BINS for p in ("median", "resolution")},
+    **{("jets", p): th.JET_PT_BINS for p in ("efficiency", "median", "resolution")},
+    ("shower_profile", "dr"): an.DR_EDGES,
+    ("shower_profile", "dr_taken"): an.DR_EDGES,
+    ("shower_profile", "depth"): an.DEPTH_EDGES,
+    ("shower_profile", "depth_taken"): an.DEPTH_EDGES,
+}
+
+
+def _draw_series(ax, summary, ds, figure, panel, edges=None, band: bool = True, **kwargs):
+    """Draw every method's series for one panel, band first so the steps sit on top."""
+    if edges is None:
+        edges = EDGES[(figure, panel)]
     for algo in METHODS:
         x, y, lo, hi = series(summary, ds, figure, panel, algo)
         if len(x) == 0:
             continue
-        if np.isfinite(lo).any():
-            th.band(ax, algo, x, lo, hi)
-        th.draw(ax, algo, x, y)
+        elo, ehi = th.bin_edges_for(x, edges)
+        if band and np.isfinite(lo).any():
+            th.band_steps(ax, algo, elo, ehi, lo, hi)
+        th.draw_steps(ax, algo, elo, ehi, y, **kwargs)
 
 
 # ------------------------------------------------------------------ figures
@@ -582,7 +636,26 @@ def fig_cluster_size(summary, datasets, out):
 
 
 def fig_shower_profile(summary, datasets, out):
-    """Where the energy is lost: transverse first, then longitudinal."""
+    """Where in a shower the energy goes: transverse first, then longitudinal.
+
+    THREE FATES PER BIN, NOT ONE. The earlier version drew the recovered fraction alone, which left
+    the rest of every bin unexplained: a reader could see that a method held half a bin's energy
+    and could not see whether the other half went to a neighbouring cluster or into no cluster at
+    all. That distinction is the whole of the failure-mode argument, and figure 5 already makes it
+    for the event as a whole, so this figure makes it again resolved in the shower frame.
+
+    The second curve per method is CUMULATIVE -- recovered plus taken by another cluster -- so each
+    panel partitions the same way figure 5's stacked bar does: below the lower curve is recovered,
+    between the two is taken by another cluster, and between the upper curve and 1 is energy no
+    cluster claimed. Six independent curves would not close visibly; two curves and a line at unity
+    do. Only the recovered curve carries a band, because it is the one the discussion quotes and
+    two bands per method is more shading than these panels can hold.
+
+    THE AXES ARE NOT UNIFORM IN ENERGY, and the caption says so, because the figure invites the
+    opposite reading. Most of a shower's energy sits in the first two or three dR bins and near the
+    shower maximum in depth, so a shortfall in an outer bin costs a small fraction of the energy of
+    the same shortfall near the core. The panels are shape, not budget; figure 5 is the budget.
+    """
     # sharex=False: the rows are different coordinates, not the same one at two scales.
     fig, axes = th.grid(2, len(datasets), datasets, sharex=False)
     for j, ds in enumerate(datasets):
@@ -590,12 +663,21 @@ def fig_shower_profile(summary, datasets, out):
             [("dr", "$\\Delta R$ from shower axis"),
              ("depth", "layers past shower start")]
         ):
-            _draw_series(axes[row][j], summary, ds, "shower_profile", coord)
-            axes[row][j].set_ylim(0, 1.0)
-            axes[row][j].set_xlabel(xlabel)
-    axes[0][0].set_ylabel("fraction of energy\nrecovered")
-    axes[1][0].set_ylabel("fraction of energy\nrecovered")
-    return th.finish(fig, out)
+            ax = axes[row][j]
+            _draw_series(ax, summary, ds, "shower_profile", coord)
+            # Thinner, part-transparent, and unlabelled: it is a second reading of the same series
+            # rather than a third method, and a legend entry per method per curve would double the
+            # key for no information.
+            _draw_series(ax, summary, ds, "shower_profile", coord + "_taken", band=False,
+                         linewidth=0.7, alpha=0.55, label="_nolegend_")
+            # Unity is what the pair of curves is read against: the distance from the upper curve
+            # to this line is the energy left in no cluster.
+            ax.axhline(1.0, color="k", lw=0.5, ls=":")
+            ax.set_ylim(0, 1.08)
+            ax.set_xlabel(xlabel)
+    axes[0][0].set_ylabel("fraction of the\nshower's energy")
+    axes[1][0].set_ylabel("fraction of the\nshower's energy")
+    return th.finish(fig, out, ncol=len(METHODS))
 
 
 def fig_response(summary, datasets, out):
@@ -798,9 +880,10 @@ def fig_isolation(summary, datasets, out):
                 x, y, lo, hi = series(summary, ds, "isolation", key, algo)
                 if len(x) == 0:
                     continue
+                elo, ehi = th.bin_edges_for(x, DR_MIN_BINS)
                 if np.isfinite(lo).any():
-                    th.band(ax, algo, x, lo, hi)
-                th.draw(ax, algo, x, y)
+                    th.band_steps(ax, algo, elo, ehi, lo, hi)
+                th.draw_steps(ax, algo, elo, ehi, y)
             ax.set_xscale("log")
             ax.set_ylim(0, 1.05)
             # The slice is named inside the panel rather than as a title: the top of each column
@@ -832,16 +915,19 @@ def fig_jets(summary, datasets, out):
         for algo in METHODS:
             x, *_ = series(summary, ds, "jets", "efficiency", algo)
             if len(x):
-                xmax = max(xmax, float(x.max()))
+                # The UPPER EDGE of the last populated bin, not its centre. The series is a step
+                # spanning the whole bin now, so an axis stopping at the centre cuts the last bin
+                # in half and the figure loses its highest-pT measurement without saying so.
+                xmax = max(xmax, float(th.bin_edges_for(x, th.JET_PT_BINS)[1].max()))
         axes[0][j].set_ylim(0, 1.02)
         # No hardcoded ylim on the response row: an earlier version capped it at 1.3 and silently
         # clipped CLUE's entire line off the top. An axis limit that can hide a series is worse
         # than an untidy one.
         axes[1][j].axhline(1.0, color="k", lw=0.5, ls=":")
-        ticks = [t for t in (25, 35, 50, 75, 100, 150, 200, 300, 400) if t <= xmax * 1.12]
+        ticks = [t for t in (25, 35, 50, 75, 100, 150, 200, 300, 400) if t <= xmax]
         for row in range(3):
             axes[row][j].set_xscale("log")
-            axes[row][j].set_xlim(th.JET_MIN_PT * 0.92, xmax * 1.12)
+            axes[row][j].set_xlim(th.JET_MIN_PT * 0.96, xmax * 1.04)
             axes[row][j].set_xticks(ticks)
             axes[row][j].set_xticklabels([str(t) for t in ticks])
             axes[row][j].minorticks_off()
