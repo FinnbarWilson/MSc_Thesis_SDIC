@@ -1,0 +1,2132 @@
+{
+  "method": "maskformer",
+  "dataset": "pu200",
+  "backend": "cuda bf16",
+  "device": "NVIDIA A100 80GB PCIe MIG 7g.80gb",
+  "store": "/mnt/ai-datastore/finnbar/eventstore_pu200_v2/ttbar_pu200_7500_8000_v2",
+  "checkpoint": "/home/finn/MSc_Thesis_SDIC/external/hepattn/src/hepattn/experiments/colliderml/logs/hepattn_20260813-T134117/ckpts/epoch=003-val_loss=2.06527.ckpt",
+  "n_queries": 1600,
+  "n_parameters": 9767937,
+  "run_config": "/home/finn/MSc_Thesis_SDIC/external/hepattn/src/hepattn/experiments/colliderml/logs/hepattn_20260813-T134117/config.yaml",
+  "mask_threshold": 0.05,
+  "object_threshold": 0.5,
+  "min_cluster_hits": 1,
+  "label_agreement_vs_store": 1.0,
+  "valid_prob_max_delta_vs_store": 0.0,
+  "warmup": 10,
+  "repeats": 3,
+  "torch_version": "2.9.1+cu128",
+  "git_sha": "9b8d740",
+  "gpu_contention_before": {
+    "probed": true,
+    "n_other_processes": 0,
+    "detail": []
+  },
+  "gpu_contention_after": {
+    "probed": true,
+    "n_other_processes": 0,
+    "detail": []
+  },
+  "samples": [
+    {
+      "repeat": 0,
+      "sample_id": 7510,
+      "n_hits": 68115,
+      "n_clusters": 1059,
+      "elapsed_ns": 337126659
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7511,
+      "n_hits": 59011,
+      "n_clusters": 944,
+      "elapsed_ns": 287578328
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7512,
+      "n_hits": 44480,
+      "n_clusters": 621,
+      "elapsed_ns": 206077109
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7513,
+      "n_hits": 58836,
+      "n_clusters": 930,
+      "elapsed_ns": 284466039
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7514,
+      "n_hits": 59262,
+      "n_clusters": 953,
+      "elapsed_ns": 285821633
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7515,
+      "n_hits": 50166,
+      "n_clusters": 731,
+      "elapsed_ns": 239855080
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7516,
+      "n_hits": 60039,
+      "n_clusters": 966,
+      "elapsed_ns": 294012305
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7517,
+      "n_hits": 51892,
+      "n_clusters": 749,
+      "elapsed_ns": 249380333
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7518,
+      "n_hits": 52990,
+      "n_clusters": 802,
+      "elapsed_ns": 252108730
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7519,
+      "n_hits": 64645,
+      "n_clusters": 1123,
+      "elapsed_ns": 315217857
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7520,
+      "n_hits": 64114,
+      "n_clusters": 968,
+      "elapsed_ns": 312417787
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7521,
+      "n_hits": 39063,
+      "n_clusters": 526,
+      "elapsed_ns": 183474973
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7522,
+      "n_hits": 56500,
+      "n_clusters": 877,
+      "elapsed_ns": 271816002
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7523,
+      "n_hits": 56207,
+      "n_clusters": 848,
+      "elapsed_ns": 271728769
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7524,
+      "n_hits": 56084,
+      "n_clusters": 807,
+      "elapsed_ns": 269225544
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7525,
+      "n_hits": 51049,
+      "n_clusters": 751,
+      "elapsed_ns": 245085998
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7526,
+      "n_hits": 60775,
+      "n_clusters": 901,
+      "elapsed_ns": 296573665
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7527,
+      "n_hits": 66030,
+      "n_clusters": 1061,
+      "elapsed_ns": 320639969
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7528,
+      "n_hits": 46504,
+      "n_clusters": 679,
+      "elapsed_ns": 216666132
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7529,
+      "n_hits": 48842,
+      "n_clusters": 715,
+      "elapsed_ns": 232380050
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7530,
+      "n_hits": 46587,
+      "n_clusters": 647,
+      "elapsed_ns": 223350509
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7531,
+      "n_hits": 56284,
+      "n_clusters": 821,
+      "elapsed_ns": 270385077
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7532,
+      "n_hits": 54682,
+      "n_clusters": 796,
+      "elapsed_ns": 261452246
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7533,
+      "n_hits": 63394,
+      "n_clusters": 936,
+      "elapsed_ns": 309201627
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7534,
+      "n_hits": 60854,
+      "n_clusters": 978,
+      "elapsed_ns": 295769695
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7535,
+      "n_hits": 56130,
+      "n_clusters": 854,
+      "elapsed_ns": 269935326
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7536,
+      "n_hits": 59734,
+      "n_clusters": 886,
+      "elapsed_ns": 287000972
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7537,
+      "n_hits": 57376,
+      "n_clusters": 885,
+      "elapsed_ns": 273139142
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7538,
+      "n_hits": 53205,
+      "n_clusters": 787,
+      "elapsed_ns": 256948821
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7539,
+      "n_hits": 51540,
+      "n_clusters": 754,
+      "elapsed_ns": 245729655
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7540,
+      "n_hits": 55186,
+      "n_clusters": 806,
+      "elapsed_ns": 265316242
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7541,
+      "n_hits": 53511,
+      "n_clusters": 855,
+      "elapsed_ns": 258499127
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7542,
+      "n_hits": 66286,
+      "n_clusters": 1066,
+      "elapsed_ns": 326591685
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7543,
+      "n_hits": 65102,
+      "n_clusters": 989,
+      "elapsed_ns": 319383482
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7544,
+      "n_hits": 58451,
+      "n_clusters": 899,
+      "elapsed_ns": 284741501
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7545,
+      "n_hits": 58065,
+      "n_clusters": 949,
+      "elapsed_ns": 283120501
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7546,
+      "n_hits": 60140,
+      "n_clusters": 875,
+      "elapsed_ns": 291466183
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7547,
+      "n_hits": 65920,
+      "n_clusters": 929,
+      "elapsed_ns": 317986019
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7548,
+      "n_hits": 53936,
+      "n_clusters": 826,
+      "elapsed_ns": 256197654
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7549,
+      "n_hits": 55080,
+      "n_clusters": 831,
+      "elapsed_ns": 261814151
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7550,
+      "n_hits": 46554,
+      "n_clusters": 699,
+      "elapsed_ns": 219979218
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7551,
+      "n_hits": 45330,
+      "n_clusters": 578,
+      "elapsed_ns": 213575021
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7552,
+      "n_hits": 53624,
+      "n_clusters": 760,
+      "elapsed_ns": 254841330
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7553,
+      "n_hits": 51197,
+      "n_clusters": 717,
+      "elapsed_ns": 243649718
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7554,
+      "n_hits": 51617,
+      "n_clusters": 767,
+      "elapsed_ns": 247767680
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7555,
+      "n_hits": 50805,
+      "n_clusters": 724,
+      "elapsed_ns": 245887538
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7556,
+      "n_hits": 54160,
+      "n_clusters": 824,
+      "elapsed_ns": 257339145
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7557,
+      "n_hits": 65698,
+      "n_clusters": 952,
+      "elapsed_ns": 319863160
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7558,
+      "n_hits": 49361,
+      "n_clusters": 753,
+      "elapsed_ns": 236570110
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7559,
+      "n_hits": 54453,
+      "n_clusters": 875,
+      "elapsed_ns": 263400399
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7560,
+      "n_hits": 43616,
+      "n_clusters": 597,
+      "elapsed_ns": 202649690
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7561,
+      "n_hits": 56972,
+      "n_clusters": 870,
+      "elapsed_ns": 274908628
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7562,
+      "n_hits": 51191,
+      "n_clusters": 719,
+      "elapsed_ns": 245230596
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7563,
+      "n_hits": 53670,
+      "n_clusters": 769,
+      "elapsed_ns": 257395512
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7564,
+      "n_hits": 56209,
+      "n_clusters": 803,
+      "elapsed_ns": 272261465
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7565,
+      "n_hits": 54601,
+      "n_clusters": 804,
+      "elapsed_ns": 263515564
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7566,
+      "n_hits": 64617,
+      "n_clusters": 1036,
+      "elapsed_ns": 316664237
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7567,
+      "n_hits": 68817,
+      "n_clusters": 1093,
+      "elapsed_ns": 341349577
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7568,
+      "n_hits": 58228,
+      "n_clusters": 910,
+      "elapsed_ns": 281356971
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7569,
+      "n_hits": 59380,
+      "n_clusters": 914,
+      "elapsed_ns": 286714394
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7570,
+      "n_hits": 56574,
+      "n_clusters": 824,
+      "elapsed_ns": 272542812
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7571,
+      "n_hits": 49909,
+      "n_clusters": 706,
+      "elapsed_ns": 238442138
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7572,
+      "n_hits": 48301,
+      "n_clusters": 633,
+      "elapsed_ns": 231593487
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7573,
+      "n_hits": 70970,
+      "n_clusters": 1105,
+      "elapsed_ns": 350013659
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7574,
+      "n_hits": 63148,
+      "n_clusters": 1053,
+      "elapsed_ns": 307145229
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7575,
+      "n_hits": 55626,
+      "n_clusters": 852,
+      "elapsed_ns": 268464535
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7576,
+      "n_hits": 59520,
+      "n_clusters": 923,
+      "elapsed_ns": 280940733
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7577,
+      "n_hits": 52114,
+      "n_clusters": 732,
+      "elapsed_ns": 249085640
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7578,
+      "n_hits": 58395,
+      "n_clusters": 833,
+      "elapsed_ns": 283048677
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7579,
+      "n_hits": 67071,
+      "n_clusters": 969,
+      "elapsed_ns": 327234888
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7580,
+      "n_hits": 69671,
+      "n_clusters": 1147,
+      "elapsed_ns": 343170381
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7581,
+      "n_hits": 36676,
+      "n_clusters": 488,
+      "elapsed_ns": 170848936
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7582,
+      "n_hits": 61565,
+      "n_clusters": 926,
+      "elapsed_ns": 301246048
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7583,
+      "n_hits": 53334,
+      "n_clusters": 770,
+      "elapsed_ns": 254565396
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7584,
+      "n_hits": 64374,
+      "n_clusters": 1046,
+      "elapsed_ns": 313401051
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7585,
+      "n_hits": 47340,
+      "n_clusters": 666,
+      "elapsed_ns": 224809569
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7586,
+      "n_hits": 64091,
+      "n_clusters": 919,
+      "elapsed_ns": 315996405
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7587,
+      "n_hits": 53385,
+      "n_clusters": 781,
+      "elapsed_ns": 259268987
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7588,
+      "n_hits": 52051,
+      "n_clusters": 790,
+      "elapsed_ns": 252151880
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7589,
+      "n_hits": 52420,
+      "n_clusters": 775,
+      "elapsed_ns": 251843555
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7590,
+      "n_hits": 55950,
+      "n_clusters": 854,
+      "elapsed_ns": 270233814
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7591,
+      "n_hits": 57323,
+      "n_clusters": 862,
+      "elapsed_ns": 280070571
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7592,
+      "n_hits": 65197,
+      "n_clusters": 1041,
+      "elapsed_ns": 324712106
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7593,
+      "n_hits": 48027,
+      "n_clusters": 656,
+      "elapsed_ns": 230983334
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7594,
+      "n_hits": 49353,
+      "n_clusters": 723,
+      "elapsed_ns": 238273338
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7595,
+      "n_hits": 62189,
+      "n_clusters": 1015,
+      "elapsed_ns": 306353838
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7596,
+      "n_hits": 57431,
+      "n_clusters": 836,
+      "elapsed_ns": 279906330
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7597,
+      "n_hits": 48124,
+      "n_clusters": 667,
+      "elapsed_ns": 229994461
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7598,
+      "n_hits": 56289,
+      "n_clusters": 875,
+      "elapsed_ns": 272929736
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7599,
+      "n_hits": 43411,
+      "n_clusters": 614,
+      "elapsed_ns": 205811835
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7600,
+      "n_hits": 57888,
+      "n_clusters": 895,
+      "elapsed_ns": 275889293
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7601,
+      "n_hits": 51983,
+      "n_clusters": 739,
+      "elapsed_ns": 250959829
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7602,
+      "n_hits": 51116,
+      "n_clusters": 760,
+      "elapsed_ns": 243555797
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7603,
+      "n_hits": 67465,
+      "n_clusters": 1074,
+      "elapsed_ns": 333960800
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7604,
+      "n_hits": 57300,
+      "n_clusters": 867,
+      "elapsed_ns": 274188595
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7605,
+      "n_hits": 59869,
+      "n_clusters": 940,
+      "elapsed_ns": 291678741
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7606,
+      "n_hits": 56545,
+      "n_clusters": 855,
+      "elapsed_ns": 275041264
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7607,
+      "n_hits": 50125,
+      "n_clusters": 704,
+      "elapsed_ns": 240622504
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7608,
+      "n_hits": 59052,
+      "n_clusters": 886,
+      "elapsed_ns": 285716753
+    },
+    {
+      "repeat": 0,
+      "sample_id": 7609,
+      "n_hits": 57938,
+      "n_clusters": 861,
+      "elapsed_ns": 278668586
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7510,
+      "n_hits": 68115,
+      "n_clusters": 1059,
+      "elapsed_ns": 336114282
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7511,
+      "n_hits": 59011,
+      "n_clusters": 944,
+      "elapsed_ns": 287139426
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7512,
+      "n_hits": 44480,
+      "n_clusters": 621,
+      "elapsed_ns": 205448639
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7513,
+      "n_hits": 58836,
+      "n_clusters": 930,
+      "elapsed_ns": 283445299
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7514,
+      "n_hits": 59262,
+      "n_clusters": 953,
+      "elapsed_ns": 285830368
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7515,
+      "n_hits": 50166,
+      "n_clusters": 731,
+      "elapsed_ns": 239425754
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7516,
+      "n_hits": 60039,
+      "n_clusters": 966,
+      "elapsed_ns": 292811284
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7517,
+      "n_hits": 51892,
+      "n_clusters": 749,
+      "elapsed_ns": 248412569
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7518,
+      "n_hits": 52990,
+      "n_clusters": 802,
+      "elapsed_ns": 252959320
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7519,
+      "n_hits": 64645,
+      "n_clusters": 1123,
+      "elapsed_ns": 315471588
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7520,
+      "n_hits": 64114,
+      "n_clusters": 968,
+      "elapsed_ns": 312465651
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7521,
+      "n_hits": 39063,
+      "n_clusters": 526,
+      "elapsed_ns": 183521216
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7522,
+      "n_hits": 56500,
+      "n_clusters": 877,
+      "elapsed_ns": 272129772
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7523,
+      "n_hits": 56207,
+      "n_clusters": 848,
+      "elapsed_ns": 271844885
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7524,
+      "n_hits": 56084,
+      "n_clusters": 807,
+      "elapsed_ns": 268851904
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7525,
+      "n_hits": 51049,
+      "n_clusters": 751,
+      "elapsed_ns": 244835762
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7526,
+      "n_hits": 60775,
+      "n_clusters": 901,
+      "elapsed_ns": 296190103
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7527,
+      "n_hits": 66030,
+      "n_clusters": 1061,
+      "elapsed_ns": 320234789
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7528,
+      "n_hits": 46504,
+      "n_clusters": 679,
+      "elapsed_ns": 216225056
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7529,
+      "n_hits": 48842,
+      "n_clusters": 715,
+      "elapsed_ns": 231308275
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7530,
+      "n_hits": 46587,
+      "n_clusters": 647,
+      "elapsed_ns": 221641912
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7531,
+      "n_hits": 56284,
+      "n_clusters": 821,
+      "elapsed_ns": 268757405
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7532,
+      "n_hits": 54682,
+      "n_clusters": 796,
+      "elapsed_ns": 260270193
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7533,
+      "n_hits": 63394,
+      "n_clusters": 936,
+      "elapsed_ns": 308568848
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7534,
+      "n_hits": 60854,
+      "n_clusters": 978,
+      "elapsed_ns": 296537166
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7535,
+      "n_hits": 56130,
+      "n_clusters": 854,
+      "elapsed_ns": 270021699
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7536,
+      "n_hits": 59734,
+      "n_clusters": 886,
+      "elapsed_ns": 287076235
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7537,
+      "n_hits": 57376,
+      "n_clusters": 885,
+      "elapsed_ns": 272615861
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7538,
+      "n_hits": 53205,
+      "n_clusters": 787,
+      "elapsed_ns": 256152067
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7539,
+      "n_hits": 51540,
+      "n_clusters": 754,
+      "elapsed_ns": 244600131
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7540,
+      "n_hits": 55186,
+      "n_clusters": 806,
+      "elapsed_ns": 264674051
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7541,
+      "n_hits": 53511,
+      "n_clusters": 855,
+      "elapsed_ns": 258122138
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7542,
+      "n_hits": 66286,
+      "n_clusters": 1066,
+      "elapsed_ns": 324789958
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7543,
+      "n_hits": 65102,
+      "n_clusters": 989,
+      "elapsed_ns": 318211041
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7544,
+      "n_hits": 58451,
+      "n_clusters": 899,
+      "elapsed_ns": 283933989
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7545,
+      "n_hits": 58065,
+      "n_clusters": 949,
+      "elapsed_ns": 282807801
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7546,
+      "n_hits": 60140,
+      "n_clusters": 875,
+      "elapsed_ns": 291136249
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7547,
+      "n_hits": 65920,
+      "n_clusters": 929,
+      "elapsed_ns": 316633014
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7548,
+      "n_hits": 53936,
+      "n_clusters": 826,
+      "elapsed_ns": 255340349
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7549,
+      "n_hits": 55080,
+      "n_clusters": 831,
+      "elapsed_ns": 261003861
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7550,
+      "n_hits": 46554,
+      "n_clusters": 699,
+      "elapsed_ns": 219160328
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7551,
+      "n_hits": 45330,
+      "n_clusters": 578,
+      "elapsed_ns": 212915778
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7552,
+      "n_hits": 53624,
+      "n_clusters": 760,
+      "elapsed_ns": 253404331
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7553,
+      "n_hits": 51197,
+      "n_clusters": 717,
+      "elapsed_ns": 242794272
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7554,
+      "n_hits": 51617,
+      "n_clusters": 767,
+      "elapsed_ns": 248370426
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7555,
+      "n_hits": 50805,
+      "n_clusters": 724,
+      "elapsed_ns": 245045223
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7556,
+      "n_hits": 54160,
+      "n_clusters": 824,
+      "elapsed_ns": 255930823
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7557,
+      "n_hits": 65698,
+      "n_clusters": 952,
+      "elapsed_ns": 318975829
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7558,
+      "n_hits": 49361,
+      "n_clusters": 753,
+      "elapsed_ns": 236081754
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7559,
+      "n_hits": 54453,
+      "n_clusters": 875,
+      "elapsed_ns": 263159848
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7560,
+      "n_hits": 43616,
+      "n_clusters": 597,
+      "elapsed_ns": 202312246
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7561,
+      "n_hits": 56972,
+      "n_clusters": 870,
+      "elapsed_ns": 273432562
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7562,
+      "n_hits": 51191,
+      "n_clusters": 719,
+      "elapsed_ns": 244158246
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7563,
+      "n_hits": 53670,
+      "n_clusters": 769,
+      "elapsed_ns": 256301113
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7564,
+      "n_hits": 56209,
+      "n_clusters": 803,
+      "elapsed_ns": 271145766
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7565,
+      "n_hits": 54601,
+      "n_clusters": 804,
+      "elapsed_ns": 262768442
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7566,
+      "n_hits": 64617,
+      "n_clusters": 1036,
+      "elapsed_ns": 316199995
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7567,
+      "n_hits": 68817,
+      "n_clusters": 1093,
+      "elapsed_ns": 340273450
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7568,
+      "n_hits": 58228,
+      "n_clusters": 910,
+      "elapsed_ns": 280623531
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7569,
+      "n_hits": 59380,
+      "n_clusters": 914,
+      "elapsed_ns": 285941611
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7570,
+      "n_hits": 56574,
+      "n_clusters": 824,
+      "elapsed_ns": 271676141
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7571,
+      "n_hits": 49909,
+      "n_clusters": 706,
+      "elapsed_ns": 237448732
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7572,
+      "n_hits": 48301,
+      "n_clusters": 633,
+      "elapsed_ns": 230541131
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7573,
+      "n_hits": 70970,
+      "n_clusters": 1105,
+      "elapsed_ns": 349546906
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7574,
+      "n_hits": 63148,
+      "n_clusters": 1053,
+      "elapsed_ns": 307156712
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7575,
+      "n_hits": 55626,
+      "n_clusters": 852,
+      "elapsed_ns": 266838283
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7576,
+      "n_hits": 59520,
+      "n_clusters": 923,
+      "elapsed_ns": 280379687
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7577,
+      "n_hits": 52114,
+      "n_clusters": 732,
+      "elapsed_ns": 248705820
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7578,
+      "n_hits": 58395,
+      "n_clusters": 833,
+      "elapsed_ns": 282898029
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7579,
+      "n_hits": 67071,
+      "n_clusters": 969,
+      "elapsed_ns": 327041532
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7580,
+      "n_hits": 69671,
+      "n_clusters": 1147,
+      "elapsed_ns": 343233790
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7581,
+      "n_hits": 36676,
+      "n_clusters": 488,
+      "elapsed_ns": 170220394
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7582,
+      "n_hits": 61565,
+      "n_clusters": 926,
+      "elapsed_ns": 300860642
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7583,
+      "n_hits": 53334,
+      "n_clusters": 770,
+      "elapsed_ns": 254180813
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7584,
+      "n_hits": 64374,
+      "n_clusters": 1046,
+      "elapsed_ns": 312745492
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7585,
+      "n_hits": 47340,
+      "n_clusters": 666,
+      "elapsed_ns": 223855544
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7586,
+      "n_hits": 64091,
+      "n_clusters": 919,
+      "elapsed_ns": 313891673
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7587,
+      "n_hits": 53385,
+      "n_clusters": 781,
+      "elapsed_ns": 256804501
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7588,
+      "n_hits": 52051,
+      "n_clusters": 790,
+      "elapsed_ns": 249483820
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7589,
+      "n_hits": 52420,
+      "n_clusters": 775,
+      "elapsed_ns": 249355668
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7590,
+      "n_hits": 55950,
+      "n_clusters": 854,
+      "elapsed_ns": 268898910
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7591,
+      "n_hits": 57323,
+      "n_clusters": 862,
+      "elapsed_ns": 278598142
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7592,
+      "n_hits": 65197,
+      "n_clusters": 1041,
+      "elapsed_ns": 322438793
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7593,
+      "n_hits": 48027,
+      "n_clusters": 656,
+      "elapsed_ns": 229800277
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7594,
+      "n_hits": 49353,
+      "n_clusters": 723,
+      "elapsed_ns": 236539057
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7595,
+      "n_hits": 62189,
+      "n_clusters": 1015,
+      "elapsed_ns": 304239149
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7596,
+      "n_hits": 57431,
+      "n_clusters": 836,
+      "elapsed_ns": 278290992
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7597,
+      "n_hits": 48124,
+      "n_clusters": 667,
+      "elapsed_ns": 228648380
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7598,
+      "n_hits": 56289,
+      "n_clusters": 875,
+      "elapsed_ns": 271953189
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7599,
+      "n_hits": 43411,
+      "n_clusters": 614,
+      "elapsed_ns": 205103533
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7600,
+      "n_hits": 57888,
+      "n_clusters": 895,
+      "elapsed_ns": 274785133
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7601,
+      "n_hits": 51983,
+      "n_clusters": 739,
+      "elapsed_ns": 250415427
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7602,
+      "n_hits": 51116,
+      "n_clusters": 760,
+      "elapsed_ns": 243317214
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7603,
+      "n_hits": 67465,
+      "n_clusters": 1074,
+      "elapsed_ns": 333753224
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7604,
+      "n_hits": 57300,
+      "n_clusters": 867,
+      "elapsed_ns": 274007280
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7605,
+      "n_hits": 59869,
+      "n_clusters": 940,
+      "elapsed_ns": 291241464
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7606,
+      "n_hits": 56545,
+      "n_clusters": 855,
+      "elapsed_ns": 274252634
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7607,
+      "n_hits": 50125,
+      "n_clusters": 704,
+      "elapsed_ns": 239659995
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7608,
+      "n_hits": 59052,
+      "n_clusters": 886,
+      "elapsed_ns": 285080115
+    },
+    {
+      "repeat": 1,
+      "sample_id": 7609,
+      "n_hits": 57938,
+      "n_clusters": 861,
+      "elapsed_ns": 278276226
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7510,
+      "n_hits": 68115,
+      "n_clusters": 1059,
+      "elapsed_ns": 336279533
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7511,
+      "n_hits": 59011,
+      "n_clusters": 944,
+      "elapsed_ns": 287631581
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7512,
+      "n_hits": 44480,
+      "n_clusters": 621,
+      "elapsed_ns": 205795377
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7513,
+      "n_hits": 58836,
+      "n_clusters": 930,
+      "elapsed_ns": 284794407
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7514,
+      "n_hits": 59262,
+      "n_clusters": 953,
+      "elapsed_ns": 284815249
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7515,
+      "n_hits": 50166,
+      "n_clusters": 731,
+      "elapsed_ns": 238828210
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7516,
+      "n_hits": 60039,
+      "n_clusters": 966,
+      "elapsed_ns": 292669479
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7517,
+      "n_hits": 51892,
+      "n_clusters": 749,
+      "elapsed_ns": 247730474
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7518,
+      "n_hits": 52990,
+      "n_clusters": 802,
+      "elapsed_ns": 251379196
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7519,
+      "n_hits": 64645,
+      "n_clusters": 1123,
+      "elapsed_ns": 315090561
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7520,
+      "n_hits": 64114,
+      "n_clusters": 968,
+      "elapsed_ns": 312017610
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7521,
+      "n_hits": 39063,
+      "n_clusters": 526,
+      "elapsed_ns": 183305753
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7522,
+      "n_hits": 56500,
+      "n_clusters": 877,
+      "elapsed_ns": 271616914
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7523,
+      "n_hits": 56207,
+      "n_clusters": 848,
+      "elapsed_ns": 271320541
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7524,
+      "n_hits": 56084,
+      "n_clusters": 807,
+      "elapsed_ns": 269234071
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7525,
+      "n_hits": 51049,
+      "n_clusters": 751,
+      "elapsed_ns": 245012349
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7526,
+      "n_hits": 60775,
+      "n_clusters": 901,
+      "elapsed_ns": 296527339
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7527,
+      "n_hits": 66030,
+      "n_clusters": 1061,
+      "elapsed_ns": 320863908
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7528,
+      "n_hits": 46504,
+      "n_clusters": 679,
+      "elapsed_ns": 217225415
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7529,
+      "n_hits": 48842,
+      "n_clusters": 715,
+      "elapsed_ns": 232019119
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7530,
+      "n_hits": 46587,
+      "n_clusters": 647,
+      "elapsed_ns": 222107785
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7531,
+      "n_hits": 56284,
+      "n_clusters": 821,
+      "elapsed_ns": 269053207
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7532,
+      "n_hits": 54682,
+      "n_clusters": 796,
+      "elapsed_ns": 260529664
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7533,
+      "n_hits": 63394,
+      "n_clusters": 936,
+      "elapsed_ns": 309219276
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7534,
+      "n_hits": 60854,
+      "n_clusters": 978,
+      "elapsed_ns": 296359680
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7535,
+      "n_hits": 56130,
+      "n_clusters": 854,
+      "elapsed_ns": 269375646
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7536,
+      "n_hits": 59734,
+      "n_clusters": 886,
+      "elapsed_ns": 286436938
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7537,
+      "n_hits": 57376,
+      "n_clusters": 885,
+      "elapsed_ns": 275779017
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7538,
+      "n_hits": 53205,
+      "n_clusters": 787,
+      "elapsed_ns": 256247152
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7539,
+      "n_hits": 51540,
+      "n_clusters": 754,
+      "elapsed_ns": 244451969
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7540,
+      "n_hits": 55186,
+      "n_clusters": 806,
+      "elapsed_ns": 264377509
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7541,
+      "n_hits": 53511,
+      "n_clusters": 855,
+      "elapsed_ns": 257675164
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7542,
+      "n_hits": 66286,
+      "n_clusters": 1066,
+      "elapsed_ns": 324886284
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7543,
+      "n_hits": 65102,
+      "n_clusters": 989,
+      "elapsed_ns": 318153325
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7544,
+      "n_hits": 58451,
+      "n_clusters": 899,
+      "elapsed_ns": 283340737
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7545,
+      "n_hits": 58065,
+      "n_clusters": 949,
+      "elapsed_ns": 282200196
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7546,
+      "n_hits": 60140,
+      "n_clusters": 875,
+      "elapsed_ns": 290558006
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7547,
+      "n_hits": 65920,
+      "n_clusters": 929,
+      "elapsed_ns": 316652654
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7548,
+      "n_hits": 53936,
+      "n_clusters": 826,
+      "elapsed_ns": 255226225
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7549,
+      "n_hits": 55080,
+      "n_clusters": 831,
+      "elapsed_ns": 260887961
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7550,
+      "n_hits": 46554,
+      "n_clusters": 699,
+      "elapsed_ns": 219060578
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7551,
+      "n_hits": 45330,
+      "n_clusters": 578,
+      "elapsed_ns": 212773279
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7552,
+      "n_hits": 53624,
+      "n_clusters": 760,
+      "elapsed_ns": 253790088
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7553,
+      "n_hits": 51197,
+      "n_clusters": 717,
+      "elapsed_ns": 242788712
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7554,
+      "n_hits": 51617,
+      "n_clusters": 767,
+      "elapsed_ns": 248379228
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7555,
+      "n_hits": 50805,
+      "n_clusters": 724,
+      "elapsed_ns": 243800005
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7556,
+      "n_hits": 54160,
+      "n_clusters": 824,
+      "elapsed_ns": 255695167
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7557,
+      "n_hits": 65698,
+      "n_clusters": 952,
+      "elapsed_ns": 318889285
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7558,
+      "n_hits": 49361,
+      "n_clusters": 753,
+      "elapsed_ns": 235832687
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7559,
+      "n_hits": 54453,
+      "n_clusters": 875,
+      "elapsed_ns": 262477270
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7560,
+      "n_hits": 43616,
+      "n_clusters": 597,
+      "elapsed_ns": 202168842
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7561,
+      "n_hits": 56972,
+      "n_clusters": 870,
+      "elapsed_ns": 273543677
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7562,
+      "n_hits": 51191,
+      "n_clusters": 719,
+      "elapsed_ns": 244097189
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7563,
+      "n_hits": 53670,
+      "n_clusters": 769,
+      "elapsed_ns": 256512017
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7564,
+      "n_hits": 56209,
+      "n_clusters": 803,
+      "elapsed_ns": 271349598
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7565,
+      "n_hits": 54601,
+      "n_clusters": 804,
+      "elapsed_ns": 263071350
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7566,
+      "n_hits": 64617,
+      "n_clusters": 1036,
+      "elapsed_ns": 316603744
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7567,
+      "n_hits": 68817,
+      "n_clusters": 1093,
+      "elapsed_ns": 340508520
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7568,
+      "n_hits": 58228,
+      "n_clusters": 910,
+      "elapsed_ns": 280630263
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7569,
+      "n_hits": 59380,
+      "n_clusters": 914,
+      "elapsed_ns": 285789591
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7570,
+      "n_hits": 56574,
+      "n_clusters": 824,
+      "elapsed_ns": 271668423
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7571,
+      "n_hits": 49909,
+      "n_clusters": 706,
+      "elapsed_ns": 237799535
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7572,
+      "n_hits": 48301,
+      "n_clusters": 633,
+      "elapsed_ns": 231150001
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7573,
+      "n_hits": 70970,
+      "n_clusters": 1105,
+      "elapsed_ns": 350442206
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7574,
+      "n_hits": 63148,
+      "n_clusters": 1053,
+      "elapsed_ns": 306323648
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7575,
+      "n_hits": 55626,
+      "n_clusters": 852,
+      "elapsed_ns": 266894848
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7576,
+      "n_hits": 59520,
+      "n_clusters": 923,
+      "elapsed_ns": 280110753
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7577,
+      "n_hits": 52114,
+      "n_clusters": 732,
+      "elapsed_ns": 248432172
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7578,
+      "n_hits": 58395,
+      "n_clusters": 833,
+      "elapsed_ns": 282879945
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7579,
+      "n_hits": 67071,
+      "n_clusters": 969,
+      "elapsed_ns": 326979521
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7580,
+      "n_hits": 69671,
+      "n_clusters": 1147,
+      "elapsed_ns": 343462593
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7581,
+      "n_hits": 36676,
+      "n_clusters": 488,
+      "elapsed_ns": 170158662
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7582,
+      "n_hits": 61565,
+      "n_clusters": 926,
+      "elapsed_ns": 300708078
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7583,
+      "n_hits": 53334,
+      "n_clusters": 770,
+      "elapsed_ns": 253942735
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7584,
+      "n_hits": 64374,
+      "n_clusters": 1046,
+      "elapsed_ns": 312723512
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7585,
+      "n_hits": 47340,
+      "n_clusters": 666,
+      "elapsed_ns": 223782707
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7586,
+      "n_hits": 64091,
+      "n_clusters": 919,
+      "elapsed_ns": 313689195
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7587,
+      "n_hits": 53385,
+      "n_clusters": 781,
+      "elapsed_ns": 256559330
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7588,
+      "n_hits": 52051,
+      "n_clusters": 790,
+      "elapsed_ns": 249269848
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7589,
+      "n_hits": 52420,
+      "n_clusters": 775,
+      "elapsed_ns": 248851639
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7590,
+      "n_hits": 55950,
+      "n_clusters": 854,
+      "elapsed_ns": 267979682
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7591,
+      "n_hits": 57323,
+      "n_clusters": 862,
+      "elapsed_ns": 277980767
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7592,
+      "n_hits": 65197,
+      "n_clusters": 1041,
+      "elapsed_ns": 323150934
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7593,
+      "n_hits": 48027,
+      "n_clusters": 656,
+      "elapsed_ns": 228746721
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7594,
+      "n_hits": 49353,
+      "n_clusters": 723,
+      "elapsed_ns": 235206872
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7595,
+      "n_hits": 62189,
+      "n_clusters": 1015,
+      "elapsed_ns": 303715048
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7596,
+      "n_hits": 57431,
+      "n_clusters": 836,
+      "elapsed_ns": 278283538
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7597,
+      "n_hits": 48124,
+      "n_clusters": 667,
+      "elapsed_ns": 228358521
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7598,
+      "n_hits": 56289,
+      "n_clusters": 875,
+      "elapsed_ns": 271530011
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7599,
+      "n_hits": 43411,
+      "n_clusters": 614,
+      "elapsed_ns": 204779228
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7600,
+      "n_hits": 57888,
+      "n_clusters": 895,
+      "elapsed_ns": 274581909
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7601,
+      "n_hits": 51983,
+      "n_clusters": 739,
+      "elapsed_ns": 249914044
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7602,
+      "n_hits": 51116,
+      "n_clusters": 760,
+      "elapsed_ns": 242747283
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7603,
+      "n_hits": 67465,
+      "n_clusters": 1074,
+      "elapsed_ns": 333788479
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7604,
+      "n_hits": 57300,
+      "n_clusters": 867,
+      "elapsed_ns": 274123705
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7605,
+      "n_hits": 59869,
+      "n_clusters": 940,
+      "elapsed_ns": 291093413
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7606,
+      "n_hits": 56545,
+      "n_clusters": 855,
+      "elapsed_ns": 273808898
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7607,
+      "n_hits": 50125,
+      "n_clusters": 704,
+      "elapsed_ns": 239349410
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7608,
+      "n_hits": 59052,
+      "n_clusters": 886,
+      "elapsed_ns": 284938406
+    },
+    {
+      "repeat": 2,
+      "sample_id": 7609,
+      "n_hits": 57938,
+      "n_clusters": 861,
+      "elapsed_ns": 278113888
+    }
+  ]
+}

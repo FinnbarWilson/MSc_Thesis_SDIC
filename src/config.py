@@ -122,7 +122,7 @@ def active_dataset() -> str:
     return _CACHE["dataset"]["active"]
 
 
-def store_path(kind: str = "store") -> Path:
+def store_path(kind: str = "store", dataset: str | None = None) -> Path:
     """Path to the event store for the active dataset.
 
     The path in the config is ce-ai-1's, under /mnt/ai-datastore. ``CALO_STORE_ROOT``
@@ -138,9 +138,12 @@ def store_path(kind: str = "store") -> Path:
     Args:
         kind: ``"store"`` for the evaluation window, ``"tune_store"`` for the smaller
             window CLUE's parameter search runs on.
+        dataset: name a dataset explicitly instead of using ``dataset.active``. See
+            :func:`settings_for` for when that is legitimate -- in short, only for a script
+            that reports on both pileup conditions at once rather than scoring one.
     """
-    active = active_dataset()
-    entry = settings()["dataset"][active]
+    active = dataset or active_dataset()
+    entry = (settings() if dataset is None else settings_for(dataset))["dataset"][active]
     if kind not in entry or not entry[kind]:
         msg = (
             f"dataset.{active}.{kind} is not set in {CONFIG_PATH}. Produce a store with "
@@ -168,15 +171,19 @@ def window(kind: str = "eval") -> tuple[int, int]:
     return windows[f"{kind}_start"], windows[f"{kind}_events"]
 
 
-def results_dir(create: bool = True) -> Path:
+def results_dir(create: bool = True, dataset: str | None = None) -> Path:
     """Where this dataset's tables go: ``results/<active dataset>/``.
 
     Scoped by dataset rather than tagged within one directory, because the tables are read
     back by name (``particles_clue.parquet``) and a pu200 run writing beside a pu0 one would
     silently replace it -- and, worse, ``make_thesis_figures`` would then draw one column from
     two pileup conditions without anything looking wrong.
+
+    Args:
+        create: make the directory if it is missing.
+        dataset: name a dataset explicitly instead of using ``dataset.active``.
     """
-    path = RESULTS_ROOT / active_dataset()
+    path = RESULTS_ROOT / (dataset or active_dataset())
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
@@ -201,12 +208,18 @@ def clue_search(subsystem: str) -> dict:
     return clue["search"][clue["coords"]][subsystem]
 
 
-def store_expectations() -> dict:
+def store_expectations(dataset: str | None = None) -> dict:
     """The store metadata this config asserts, for :class:`EventStore` to check.
 
     Keys are the leaf names of the reader's ``CONTRACT_KEYS``.
+
+    Args:
+        dataset: name a dataset explicitly instead of using ``dataset.active``. The
+            expectations differ between the two -- pu200 overrides ``particle_max_abs_eta``
+            to 0.88 -- so a caller opening a named store must ask for that store's dataset
+            or the contract check will fire on the wrong cuts.
     """
-    cfg = settings()
+    cfg = settings() if dataset is None else settings_for(dataset)
     return {
         "length": "m",
         "energy": "GeV",

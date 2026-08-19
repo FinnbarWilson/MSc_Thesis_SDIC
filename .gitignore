@@ -37,3 +37,4 @@ results/*/soft_particles_*.parquet
 # Rebuildable caches from the event store, not results.
 results/*/anatomy_particles.parquet
 results/*/dataset_features*.parquet
+docs/
