@@ -78,6 +78,24 @@ if [ "$DUMP_DATASET" = "pu200" ]; then CHUNK="${CHUNK:-10}"; else CHUNK="${CHUNK
 # the one place that choice is justified; setting it here silently overrides it, which has happened
 # once before (4 against format's 16).
 
+# The run config, and the fallback that makes a FETCHED checkpoint work.
+#
+# eval/dump.py defaults --config to config.yaml two levels above the checkpoint, which Lightning
+# writes during training. scripts.fetch_checkpoints downloads only the .ckpt, so that file does
+# not exist for a fetched one. Fall back to this repository's config for the condition, and pass
+# the shard directory explicitly, because the repository config's paths are relative to the
+# repository root while this script may run from elsewhere.
+RUN_CONFIG="${RUN_CONFIG:-}"
+if [ -z "$RUN_CONFIG" ] && [ ! -f "$(dirname "$(dirname "$CKPT")")/config.yaml" ]; then
+    RUN_CONFIG="$MIRROR/configs/${DUMP_DATASET}.yaml"
+    echo "note       : no run config beside the checkpoint; using $RUN_CONFIG"
+fi
+CONFIG_ARGS=()
+if [ -n "$RUN_CONFIG" ]; then
+    [ -f "$RUN_CONFIG" ] || { echo "ABORT: no config at $RUN_CONFIG"; exit 1; }
+    CONFIG_ARGS+=(--config "$RUN_CONFIG" --data-dir "$DATA_DIR/ttbar_${DUMP_DATASET}/")
+fi
+
 echo "host       : $(hostname)"
 echo "started    : $(date)"
 echo "job        : ${SLURM_JOB_ID:-<interactive>}"
@@ -97,10 +115,8 @@ df -h "$STORE_ROOT" | tail -1
 sync_mirror || exit 1
 select_gpu  || exit 1
 
-# The dump reads the raw shards through the model's own dataloader, so it needs the dataset bound
-# into the container exactly as training does, and the config beside the checkpoint tells it where
-# to look. That config was written on this machine by the training run, so its paths are already
-# DIAS paths, so no override is needed here, unlike train.sh.
+# The dump reads the raw shards through the model's own dataloader, so the dataset is bound into
+# the container exactly as training does.
 echo
 exec apptainer exec --nv \
     --bind "$DATA_DIR" \
@@ -110,4 +126,5 @@ exec apptainer exec --nv \
     "$SIF" \
     "$ENV_PYTHON" -m hepattn.experiments.colliderml.eval.dump "$CKPT" \
         --start-event "$START" --num-events "$NUM" --out "$STORE_ROOT" \
-        --chunk-size "$CHUNK" --num-workers "${WORKERS:-8}"
+        --chunk-size "$CHUNK" --num-workers "${WORKERS:-8}" \
+        ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"}

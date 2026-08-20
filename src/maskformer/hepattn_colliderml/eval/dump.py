@@ -45,7 +45,9 @@ PARTICLE_CLASS_FLAGS = (
 STORE_LOGIT_FLOOR = float(np.log(fmt.STORE_MASK_THRESHOLD / (1.0 - fmt.STORE_MASK_THRESHOLD)))
 
 
-def build_dataset(run_config: Path, start_event: int, num_events: int) -> ColliderMLDataset:
+def build_dataset(
+    run_config: Path, start_event: int, num_events: int, data_dir: Path | None = None
+) -> ColliderMLDataset:
     """Rebuild the checkpoint's own data configuration over a different event window.
 
     Deriving the dataset from the run's `config.yaml` is what makes the comparison fair
@@ -55,11 +57,20 @@ def build_dataset(run_config: Path, start_event: int, num_events: int) -> Collid
     A `ColliderMLDataset` is built directly rather than going through
     `ColliderMLDataModule`, whose `setup("test")` also constructs the *training* dataset and
     re-scans all 1000 parquet shards for nothing.
+
+    Args:
+        run_config: the training run's resolved config, or this repository's config for the
+            condition when dumping from a checkpoint that was fetched rather than trained.
+        start_event, num_events: the window to dump, indexed over the shards present on disk.
+        data_dir: overrides the config's `test_dir`. Needed with a repository config, whose
+            paths are relative to the repository root and would otherwise resolve against
+            whatever directory the launcher happens to run from.
     """
     config = yaml.safe_load(run_config.read_text())["data"]
     accepted = set(inspect.signature(ColliderMLDataset.__init__).parameters)
     kwargs = {k: v for k, v in config.items() if k in accepted}
-    kwargs.update(dirpath=config["test_dir"], start_event=start_event, num_events=num_events)
+    dirpath = str(data_dir) if data_dir is not None else config["test_dir"]
+    kwargs.update(dirpath=dirpath, start_event=start_event, num_events=num_events)
     return ColliderMLDataset(**kwargs)
 
 
@@ -328,7 +339,11 @@ def git_provenance(repo: Path) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ckpt", type=Path, help="a trained CLUSTERING checkpoint")
-    parser.add_argument("--config", type=Path, default=None, help="defaults to config.yaml beside the checkpoint")
+    parser.add_argument("--config", type=Path, default=None,
+                        help="the run's resolved config; defaults to config.yaml two levels above "
+                             "the checkpoint, which only exists for a checkpoint trained here")
+    parser.add_argument("--data-dir", type=Path, default=None,
+                        help="override the config's test_dir, e.g. <root>/ColliderML_data/ttbar_pu0/")
     parser.add_argument("--start-event", type=int, required=True)
     parser.add_argument("--num-events", type=int, required=True)
     parser.add_argument("--out", type=Path, required=True, help="directory to hold the store")
@@ -353,7 +368,14 @@ def main() -> None:
     args = parser.parse_args()
 
     run_config = args.config or args.ckpt.parent.parent / "config.yaml"
-    dataset = build_dataset(run_config, args.start_event, args.num_events)
+    if not run_config.is_file():
+        msg = (
+            f"no run config at {run_config}. A checkpoint trained here has one beside it; a "
+            f"fetched checkpoint does not, so pass --config with this repository's config for "
+            f"the condition, and --data-dir with the absolute path to its shards."
+        )
+        raise SystemExit(msg)
+    dataset = build_dataset(run_config, args.start_event, args.num_events, args.data_dir)
 
     print(f"calibrating layer geometry over {args.layer_calib_events} events ...", flush=True)
     layer_centres = calibrate_layers(dataset, args.layer_calib_events)

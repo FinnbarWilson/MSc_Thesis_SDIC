@@ -51,6 +51,8 @@ Name the condition explicitly, as `settings_for('pu0')` does here: plain `settin
 
 The evaluation store is what the results are reported over. The tuning store is a separate 50-event window, needed only to re-derive CLUE's parameters or the MaskFormer working point, both of which are already committed. Both land in `external/eventstores/`, which is where `config/experiment.yaml` already looks. Lower `CHUNK` if the dump is killed for memory.
 
+`eval/dump.py` rebuilds the dataset from the training run's resolved `config.yaml`, which Lightning writes two levels above the checkpoint, so that the cells it dumps are the ones the checkpoint was trained against. A fetched checkpoint arrives without that file, so the launcher falls back to `configs/<condition>.yaml` in this repository and passes the shard directory explicitly, since that config's paths are relative to the repository root. It prints which config it used. `RUN_CONFIG=<path>` overrides the choice.
+
 ### 4. Back to the root README
 
 ```bash
@@ -86,6 +88,7 @@ The two launcher sets differ in how they take the pileup condition. `dias/train.
 | `STORE_ROOT` | `dias/dump_store.sh` | where the dump writes (default `external/eventstores`) |
 | `OUT` | `ce_ai_1/dump_store.sh` | the same, under a different name |
 | `CHUNK` | `dump_store.sh` | events held in memory per chunk file (25 at pu0, 10 at pu200) |
+| `RUN_CONFIG` | `dump_store.sh` | the resolved config to rebuild the dataset from; defaults as described above |
 | `COMET_API_KEY` | `train.sh` | read from the environment; the run warns and continues without it |
 
 ## What is here

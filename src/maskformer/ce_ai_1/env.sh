@@ -14,6 +14,8 @@
 
 EXP_DIR="$HEPATTN/src/hepattn/experiments/colliderml"
 PYTHON="$VENV_TRAIN/bin/python"
+# Named to match dias/env.sh, so the scripts beside each read the same variable.
+DATA_DIR="${DATA_DIR:-$DATA_ROOT}"
 
 # Re-sync the mirrored subtree into the checkout on every run.
 #

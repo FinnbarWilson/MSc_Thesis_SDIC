@@ -65,7 +65,7 @@ python setup/download_data.py --pileup pu200 --shards 80     # ~238 GB
 python setup/verify_data.py   --pileup pu200 --shards 80
 ```
 
-`download_data.py` fetches shards `0` to `N-1`. Pileup 0 holds 1,000 events per shard and its windows end at event 20,750, so 21 shards cover it. Pileup 200 holds only 100 events per shard and its windows end at event 8,000, so it needs 80. Set `COLLIDERML_DATA` first if the dataset must live somewhere other than `external/`.
+`download_data.py` fetches shards `0` to `N-1`. Pileup 0 holds 1,000 events per shard and its windows end at event 20,750, so 21 shards cover it. Pileup 200 holds only 100 events per shard and its windows end at event 8,000, so it needs 80. Set `COLLIDERML_DATA` first, to an absolute path, if the dataset must live somewhere other than `external/`.
 
 Run `verify_data.py` both times. `ColliderMLDataset` pairs a particles shard with the calo_hits shard of the same filename and uses the intersection of the two listings, so a shard that downloaded in one collection but not the other is dropped without an error, leaving a lower event count than expected.
 
@@ -95,6 +95,8 @@ Without a scheduler, the `ce_ai_1` launcher takes the same arguments and runs in
 ```bash
 cd src/maskformer/ce_ai_1 && CKPT=$CKPT ./dump_store.sh pu0 eval
 ```
+
+The dump needs the training run's resolved config to know which cuts the checkpoint was trained under. A checkpoint you trained has one beside it; a fetched one does not, so the launcher falls back to this repository's `src/maskformer/hepattn_colliderml/configs/<condition>.yaml` and says so in its log. `RUN_CONFIG=<path>` overrides that.
 
 Neither launcher will match a new cluster exactly; see [Running on a cluster of your own](#running-on-a-cluster-of-your-own) and [`src/maskformer/README.md`](src/maskformer/README.md). Lower `CHUNK` if the dump is killed for memory.
 

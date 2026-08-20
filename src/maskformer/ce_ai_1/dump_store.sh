@@ -49,6 +49,24 @@ if [ "$DATASET" = "pu200" ]; then CHUNK="${CHUNK:-10}"; else CHUNK="${CHUNK:-25}
 # the one place that choice is justified; setting it here silently overrides it, which has happened
 # once before (4 against format's 16).
 
+# The run config, and the fallback that makes a FETCHED checkpoint work.
+#
+# eval/dump.py defaults --config to config.yaml two levels above the checkpoint, which Lightning
+# writes during training. scripts.fetch_checkpoints downloads only the .ckpt, so that file does
+# not exist for a fetched one. Fall back to this repository's config for the condition, and pass
+# the shard directory explicitly, because the repository config's paths are relative to the
+# repository root while this script may run from elsewhere.
+RUN_CONFIG="${RUN_CONFIG:-}"
+if [ -z "$RUN_CONFIG" ] && [ ! -f "$(dirname "$(dirname "$CKPT")")/config.yaml" ]; then
+    RUN_CONFIG="$REPO_ROOT/src/maskformer/hepattn_colliderml/configs/${DATASET}.yaml"
+    echo "note       : no run config beside the checkpoint; using $RUN_CONFIG"
+fi
+CONFIG_ARGS=()
+if [ -n "$RUN_CONFIG" ]; then
+    [ -f "$RUN_CONFIG" ] || { echo "ABORT: no config at $RUN_CONFIG"; exit 1; }
+    CONFIG_ARGS+=(--config "$RUN_CONFIG" --data-dir "$DATA_DIR/ttbar_${DATASET}/")
+fi
+
 echo "checkpoint : $CKPT"
 echo "dataset    : $DATASET"
 echo "window     : [$START, $((START + NUM)))  ($WHICH store)"
@@ -60,4 +78,5 @@ df -h "$OUT" | tail -1
 cd "$EXP_DIR"
 exec "$PYTHON" -m hepattn.experiments.colliderml.eval.dump "$CKPT" \
     --start-event "$START" --num-events "$NUM" --out "$OUT" \
-    --chunk-size "$CHUNK" --num-workers 8
+    --chunk-size "$CHUNK" --num-workers 8 \
+    ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"}
