@@ -69,6 +69,8 @@ python setup/verify_data.py   --pileup pu200 --shards 80
 
 Run `verify_data.py` both times. `ColliderMLDataset` pairs a particles shard with the calo_hits shard of the same filename and uses the intersection of the two listings, so a shard that downloaded in one collection but not the other is dropped without an error, leaving a lower event count than expected.
 
+`--shards` there means how many you need counting from shard 0. Already having more, from an earlier or fuller download, is reported and is not a failure.
+
 ### 3. Fetch both checkpoints
 
 ```bash

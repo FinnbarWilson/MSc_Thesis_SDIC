@@ -10,13 +10,15 @@ match across the two, since an unmatched shard is dropped silently rather than r
 every parquet footer parses and reports the expected row count, a truncated download usually
 still having a plausible size.
 
-Pass the same ``--pileup`` and ``--shards`` you gave ``download_data.py``.
+``--shards`` is how many you need counting from shard 0, so pass what you gave
+``download_data.py``. Having more than that is reported and is not a failure.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -30,7 +32,8 @@ ROWS_PER_SHARD = {"pu0": 1000, "pu200": 100}
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pileup", default="pu200", choices=sorted(ROWS_PER_SHARD))
-    p.add_argument("--shards", type=int, default=100, help="how many were downloaded")
+    p.add_argument("--shards", type=int, default=100,
+                   help="how many you need, counting from shard 0; more than this is fine")
     p.add_argument("--data-root", default=os.environ.get("COLLIDERML_DATA", "external/ColliderML_data"))
     args = p.parse_args()
 
@@ -54,8 +57,17 @@ def main() -> int:
         names[c] = {f.name for f in files}
         print(f"{c}: {len(files)} shards, {sum(f.stat().st_size for f in files) / 1e9:.1f} GB")
 
-        if len(files) != args.shards:
-            failures.append(f"{c}: expected {args.shards} shards, found {len(files)}")
+        # Which shards are present, by the index in `train-00042-of-01000.parquet`. Checking the
+        # indices rather than the count is what catches a gap: 100 shards with number 20 missing
+        # would pass a count test and then fail in the dump, because download_data.py numbers
+        # from 0 and the event windows are positions into that sequence.
+        have = {int(m.group(1)) for f in files if (m := re.match(r"train-(\d+)-of-", f.name))}
+        missing = sorted(set(range(args.shards)) - have)
+        if missing:
+            shown = ", ".join(str(i) for i in missing[:5]) + (" ..." if len(missing) > 5 else "")
+            failures.append(f"{c}: {len(missing)} of the first {args.shards} shards missing ({shown})")
+        elif len(files) > args.shards:
+            print(f"{c}: {len(files) - args.shards} shards beyond the {args.shards} needed, which is fine")
 
         rows = 0
         for f in files:
@@ -76,7 +88,8 @@ def main() -> int:
     for c in COLLECTIONS:
         unmatched = names[c] - shared
         if unmatched:
-            failures.append(f"{c}: {len(unmatched)} shards have no counterpart and will be dropped")
+            n = len(unmatched)
+            failures.append(f"{c}: {n} shard{'s' if n > 1 else ''} with no counterpart, which the loader drops")
 
     if failures:
         print("\nFAILED:")
@@ -84,7 +97,8 @@ def main() -> int:
             print(f"  - {f}")
         return 1
 
-    print(f"\nOK: {args.shards} matched shards per collection, {args.shards * expected_rows:,} events.")
+    print(f"\nOK: {len(shared)} matched shards per collection, {len(shared) * expected_rows:,} events; "
+          f"the first {args.shards} are present, which is what the event windows need.")
     return 0
 
 
