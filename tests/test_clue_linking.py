@@ -1,8 +1,7 @@
-"""The cross-subsystem linking stage.
+"""The cross-subsystem linking stage, on a synthetic record.
 
-Built on a synthetic record rather than a store, so these need no event store. They do need
-CLUEstering, because src.clue.pipeline imports it at module scope -- skipped without it, the
-same way tests/test_clue_periodic.py does, so `pytest` still runs on a bare clone.
+Needs no event store, but does need CLUEstering, which :mod:`src.clue.pipeline` imports at
+module scope.
 """
 
 import numpy as np

@@ -1,22 +1,4 @@
-"""The binning behind every plotted point and every error bar in the thesis.
-
-`src.plotting.thesis` is the last step between the scored tables and the figures: it decides
-which bins survive, where their centres sit, what the plotted value is, and how wide the bar is.
-An error here changes the figures without changing any number in `results/`, so nothing else in
-this suite would catch it.
-
-Three properties are pinned, one per helper, and each is a decision the figures depend on:
-
-*   `binned_proportion` uses an exact Clopper-Pearson interval, so a bin where everything passes
-    gets a bar that reaches 1 rather than a zero-width one -- the failure that makes a saturated
-    bin look infinitely precise.
-*   `binned_bootstrap` resamples EVENTS, not particles. Particles in one event share cells and
-    occupancy, so treating them as independent understates the spread.
-*   `binned_ratio` is a ratio of sums, not a mean of per-object ratios. The per-particle counts
-    are heavily skewed and the two differ materially on them.
-
-All pure numpy: no event store, no CLUEstering, no figures drawn.
-"""
+"""The binning behind every plotted point and every error bar in the thesis."""
 
 import numpy as np
 import pytest

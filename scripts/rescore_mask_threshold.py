@@ -1,32 +1,15 @@
-"""Does lowering the mask threshold close the jet deficit, and what does it cost?
+"""Re-score the model at several mask thresholds, with jets rebuilt.
 
-    python -m scripts.rescore_mask_threshold
-    python -m scripts.rescore_mask_threshold --thresholds 0.02 0.05 --events 200
+    python -m scripts.rescore_mask_threshold [--thresholds 0.02 0.05] [--events 200]
 
-THE QUESTION THIS ANSWERS. The energy MaskFormer leaves unclustered is REACHABLE: at a mask
-threshold of 0.02 it claims 0.9890 of the on-target energy against 0.9703 at the working point of
-0.05, and the cluster count does not move. Establishing that alone leaves the trade unknown
--- and it cannot be inferred, because efficiency and purity are counts of threshold crossings
-rather than energy fractions. A cluster sitting at purity 0.51 crosses the working point on an
-arbitrarily small contamination, so no bound on the contaminating ENERGY bounds the purity LOSS.
+The energy MaskFormer leaves unclustered is reachable at a lower mask threshold, but what that
+costs cannot be inferred: efficiency and purity are counts of threshold crossings, so no bound
+on the contaminating energy bounds the purity loss. Each row re-derives the labels, re-runs the
+scorer and rebuilds the anti-k_t jets.
 
-So this measures the trade directly. For each mask threshold it re-derives the labels, re-runs the
-full scorer, and rebuilds the anti-kt jets from the same clusters, reporting the three quantities
-the argument turns on:
-
-  * efficiency and purity  -- what the lower threshold costs per cluster
-  * E_clustered/E_on_target -- what it recovers
-  * sum reco pT / sum ref pT -- whether the jet deficit actually closes
-
-CLUE is scored once and carried through every row unchanged. It has no mask threshold, so its
-numbers are constant by construction; they are repeated so each row is a complete comparison rather
-than something the reader has to hold in their head against another table.
-
-WHAT THIS IS NOT. It is not a re-tuning. The object threshold stays at its tuned value throughout
-and only the mask axis moves, because the mask axis is the one the unclaimed energy lives on --
-`config/experiment.yaml` records that f1 moves by 0.003 across the entire mask scan at fixed object
-threshold, so the working point in use was never chosen on this axis and lowering it is not
-undoing a tuning decision.
+Not a re-tuning: the object threshold is held at its tuned value and only the mask axis moves.
+CLUE is scored once and repeated on every row, so each row is a complete comparison. Writes
+``mask_threshold_rescore.csv``.
 """
 
 from __future__ import annotations
@@ -43,7 +26,7 @@ from src.evaluation import jets as jt
 from src.evaluation.metrics import score_event
 from src.io.event_store import EventStore
 
-#: 0.02 is the store's probability floor, so it is the lowest threshold recoverable offline at all.
+#: 0.02 is the store's probability floor, so it is the lowest threshold recoverable offline.
 THRESHOLDS = (0.02, 0.03, 0.05, 0.10)
 
 
@@ -107,9 +90,8 @@ def main() -> None:
         clue["particles"].append(p)
         clue["clusters"].append(c)
 
-        # Jets for every threshold and for CLUE in ONE call per event, so every method sees the
-        # same reference jets -- rebuilding them per method would let a floating-point difference
-        # in the truth partition leak into the comparison.
+        # One call per event for every threshold and for CLUE, so all of them see the same
+        # reference jets.
         by_method = {f"t{t}": labels[t] for t in args.thresholds}
         by_method["clue"] = (cl_label, cl_n)
         rows = jt.event_rows(record, by_method, cfg["dataset"]["active"])

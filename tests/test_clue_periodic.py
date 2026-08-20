@@ -1,19 +1,13 @@
 """CLUEstering's periodic metric needs the wrap flags too.
 
-`choose_metric("periodic_euclidean")` looks like it is enough to make phi periodic. It is
-not, and the failure is silent: the metric changes how far apart two points are, but CLUE
-first bins points into a tile grid to decide which pairs to compare at all, and that grid
-wraps only when `wrapped_coords` says so. Without it, a shower straddling +/-pi is split in
-two exactly as if the metric had never been set.
+``choose_metric("periodic_euclidean")`` looks sufficient and is not: it changes how far apart
+two points are, but CLUE first bins points into a tile grid to decide which pairs to compare at
+all, and that grid wraps only when ``wrapped_coords`` says so. Without it a shower straddling
++/-pi is split in two exactly as if the metric had never been set, and the failure is silent.
 
-These tests pin both halves of the fix, and the negative case is asserted deliberately: it
-is what stops someone "simplifying" the call back to metric-only.
-
-CLUEstering is the one dependency here that has to be compiled, and it is absent from the
-laptop environment an assessor regenerates the figures in. Skipping this module is therefore
-the correct behaviour there -- but it has to be a *skip*, not a collection error, or a missing
-optional dependency takes the whole suite down with it and none of the scorer tests run
-either.
+Both halves are pinned, the negative case deliberately, so the call cannot be "simplified" back
+to metric-only. The module skips without CLUEstering rather than failing to collect, or a
+missing optional dependency would take the scorer tests down with it.
 """
 
 import numpy as np

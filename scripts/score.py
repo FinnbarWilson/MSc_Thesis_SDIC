@@ -1,20 +1,12 @@
 """Score a clustering against the truth partition and write the long tables.
 
-Both algorithms come through here, and the scorer is never told which is which: it receives
-a label per cell and nothing else. That is what makes the head-to-head fair in a way that
-inspecting two configs cannot guarantee.
-
     python -m scripts.score --algo maskformer
-    python -m scripts.score --algo clue --params results/pu0/clue_parameters.json
+    python -m scripts.score --algo clue
     python -m scripts.score --algo oracle_resolution
 
-Tables land in ``results/<active dataset>/``, so the same commands produce the pu200 set
-after flipping ``dataset.active`` and cannot overwrite the pu0 one.
-
-`oracle_resolution` is a reference clustering rather than a method under test; see
-src/evaluation/oracle.py for what it is and how to read it. It comes through this same entry
-point, and the scorer is no more aware of it than of anything else, which is the point: a
-ceiling measured by different code from the methods it bounds is not a ceiling.
+Every algorithm comes through here, and the scorer receives a label per cell and nothing else.
+Tables land in ``results/<active dataset>/``. ``oracle_resolution`` is a reference clustering
+rather than a method under test; see :mod:`src.evaluation.oracle`.
 """
 
 import argparse
@@ -29,9 +21,8 @@ from src.evaluation.metrics import pool, score_event
 from src.evaluation.oracle import resolution_labels
 from src.io.event_store import EventStore
 
-# Untuned starting point, chosen against the measured cell energy scale rather than guessed;
-# see the commentary on `clue.search` in config/experiment.yaml. Replaced by the Optuna
-# result once tuning has run.
+# Untuned starting point, calibrated against the measured cell energy scale. Replaced by the
+# Optuna result once tuning has run.
 DEFAULT_CLUE_PARAMS = {
     "d_c_2d": 0.02,
     "rho_c_2d": 1.0e-3,
@@ -87,12 +78,8 @@ def main() -> None:
     print(f"  checkpoint  {store.meta['maskformer']['checkpoint'].rsplit('/', 1)[-1]}")
     print(f"  cuts        {store.meta['hit_selection']}  {store.meta['particle_selection']}")
 
-    # Defaulting to the active dataset's own parameter file rather than requiring --params.
-    # The explicit flag was a footgun once results became dataset-scoped: the obvious command
-    # to type is the one in the README, and the path in the README belonged to whichever
-    # dataset it was written for, so a pu200 run would have been handed pu0's tuning without
-    # anything looking wrong. `tune_clue` records the dataset inside the file, and the
-    # mismatch is reported below.
+    # Defaults to the active dataset's own parameter file. `tune_clue` records the dataset
+    # inside the file, so a set tuned elsewhere is reported rather than used silently.
     params_path = args.params or (results_dir() / "clue_parameters.json")
     if params_path.exists():
         tuned = json.loads(params_path.read_text())
@@ -104,9 +91,9 @@ def main() -> None:
                   f"CLUE's density thresholds do not transfer across pileup conditions; "
                   f"run scripts.tune_clue on this dataset.")
     else:
-        params_by_subsystem = {name: DEFAULT_CLUE_PARAMS for name in SUBSYSTEMS}
+        params_by_subsystem = dict.fromkeys(SUBSYSTEMS, DEFAULT_CLUE_PARAMS)
         if args.algo == "clue":
-            print(f"  clue params  UNTUNED defaults (no {params_path}) -- run scripts.tune_clue "
+            print(f"  clue params  untuned defaults (no {params_path}); run scripts.tune_clue "
                   f"before reporting these numbers")
 
     particles, clusters, events = [], [], []

@@ -4,27 +4,16 @@
     python -m scripts.fetch_checkpoints --datasets pu200
     python -m scripts.fetch_checkpoints --list          # what exists, and what is already local
 
-WHY THIS EXISTS RATHER THAN THE CHECKPOINTS BEING IN GIT. They are ~112 MB each, and GitHub
-refuses any single file over 100 MB pushed as an ordinary git object, so committing one is not
-merely untidy -- the push is rejected. Git LFS would take them, but the free tier allows 1 GB of
-bandwidth a month, which is about four clones once both pileup conditions are published, and a
-reader who only wants to redraw the figures should not pay for a 225 MB download at all. Release
-assets are outside the git object store: cloning stays fast and only someone who actually intends
-to run the model fetches one.
+They are release assets rather than git objects: each is ~112 MB, past GitHub's 100 MB limit for
+an ordinary object, and someone who only wants to redraw the figures should not pay for the
+download. Each lands at the exact path ``config/experiment.yaml`` already names for it, under
+the gitignored ``external/`` tree, so nothing in the config changes when one is fetched.
 
-WHERE THEY LAND. Each checkpoint is written to the exact path `config/experiment.yaml` already
-names for it, under the gitignored `external/` tree. Nothing in the config changes when a
-checkpoint is fetched, so a machine that trained its own and a machine that downloaded one are
-configured identically -- which is the point, since the config's checkpoint path is what ties a
-result back to the run that produced it.
+Every asset carries its SHA-256 here and is verified after transfer. A local file whose digest
+disagrees is reported and left alone rather than replaced, since it is more likely a locally
+trained checkpoint than a corrupt download. ``--force`` overrides that.
 
-INTEGRITY IS CHECKED, AND A LOCAL FILE IS NEVER OVERWRITTEN. A truncated download of a 112 MB
-asset is a plausible failure and produces a file torch will refuse to load with an error that says
-nothing about the real cause, so every asset carries its SHA-256 here and is verified after
-transfer. If a file is already present and its digest does not match, that is far more likely to
-be a locally trained checkpoint than a corrupt download, and destroying someone's training run to
-replace it with a download is not a thing a helper script should do unasked: it is reported and
-skipped unless --force says otherwise.
+A checkpoint is needed only to dump a new event store.
 """
 
 from __future__ import annotations
@@ -38,8 +27,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-#: The release the assets hang off. Assets are addressed by tag rather than by release id so the
-#: URL stays readable and stays valid if the release is edited.
+#: Assets are addressed by tag rather than release id, so the URL survives the release being
+#: edited.
 DEFAULT_TAG = "checkpoints-v1"
 REPO = "FinnbarWilson/MSc_Thesis_SDIC"
 
@@ -48,10 +37,8 @@ REPO = "FinnbarWilson/MSc_Thesis_SDIC"
 class Checkpoint:
     """One published checkpoint.
 
-    `sha256` is None for a checkpoint that has not been published yet, which is the state a new
-    entry starts in: a model trained on one machine cannot have its digest filled in from another.
-    Whoever uploads the asset replaces the None with the digest `sha256sum` prints, and nothing
-    else about this file needs to change. Both checkpoints are published as of 2026-08-19.
+    `sha256` is None until the asset is published: whoever uploads it replaces the None with the
+    digest `sha256sum` prints, and nothing else here changes.
     """
 
     dataset: str
@@ -102,7 +89,7 @@ def download(ckpt: Checkpoint, tag: str, root: Path) -> bool:
     """Fetch one checkpoint. Returns True if the file is present and verified afterwards."""
     dest = root / ckpt.dest
     if ckpt.sha256 is None:
-        print(f"  {ckpt.dataset}: not published yet ({ckpt.run}) -- skipping")
+        print(f"  {ckpt.dataset}: not published yet ({ckpt.run}), skipping")
         return False
 
     if dest.exists():
@@ -112,7 +99,7 @@ def download(ckpt: Checkpoint, tag: str, root: Path) -> bool:
             return True
         print(f"  ! {ckpt.dataset}: {dest} exists but its digest does not match the release.")
         print(f"    local  {have}\n    release {ckpt.sha256}")
-        print("    Left alone -- this is most likely a locally trained checkpoint. "
+        print("    Left alone; this is most likely a locally trained checkpoint. "
               "Pass --force to replace it.")
         return False
 
@@ -125,7 +112,7 @@ def download(ckpt: Checkpoint, tag: str, root: Path) -> bool:
             shutil.copyfileobj(response, out)
     except urllib.error.HTTPError as exc:
         tmp.unlink(missing_ok=True)
-        extra = ("  The release or asset does not exist yet -- see --list."
+        extra = ("  The release or asset does not exist yet. See --list."
                  if exc.code == 404 else "")
         print(f"  ! {ckpt.dataset}: HTTP {exc.code} fetching {url}.{extra}")
         return False
@@ -134,13 +121,12 @@ def download(ckpt: Checkpoint, tag: str, root: Path) -> bool:
         print(f"  ! {ckpt.dataset}: {exc}")
         return False
 
-    # VERIFY BEFORE MOVING INTO PLACE, so a bad transfer can never occupy the real path. A
-    # half-written checkpoint at the configured location is worse than none: the config still
-    # resolves, and the failure surfaces much later as an opaque torch load error.
+    # Verify before moving into place: a half-written checkpoint at the configured path is worse
+    # than none, since the config still resolves and the failure surfaces as a torch load error.
     got = digest(tmp)
     if got != ckpt.sha256:
         tmp.unlink(missing_ok=True)
-        print(f"  ! {ckpt.dataset}: digest mismatch after download -- discarded.")
+        print(f"  ! {ckpt.dataset}: digest mismatch after download, discarded.")
         print(f"    expected {ckpt.sha256}\n    got      {got}")
         return False
     tmp.replace(dest)
@@ -167,7 +153,7 @@ def main() -> None:
     if args.list:
         for c in wanted:
             dest = root / c.dest
-            state = ("published" if c.sha256 else "NOT PUBLISHED")
+            state = ("published" if c.sha256 else "not published")
             local = "present" if dest.exists() else "absent"
             print(f"{c.dataset:<6} {state:<14} local: {local:<8} {c.run}")
             print(f"       {c.note}")

@@ -1,1 +1,1 @@
-"""Analysis code. Everything here is numpy-only -- see src/maskformer/ for the GPU half."""
+"""Analysis code. Everything here is numpy-only; src/maskformer/ is the GPU half."""

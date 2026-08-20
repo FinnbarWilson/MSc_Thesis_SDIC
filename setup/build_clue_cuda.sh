@@ -1,23 +1,18 @@
 #!/usr/bin/env bash
 # Compile CLUEstering's CUDA backend into the analysis environment.
 #
-# WHY THIS EXISTS. The conda-forge CLUEstering wheel ships only the CPU backends:
-# `CLUEstering.backends` advertises "gpu cuda" but `lib/CLUE_GPU_CUDA*.so` is absent, and
-# `run_clue` responds to a missing backend by PRINTING "CUDA module not found" and returning
-# with `cluster_ids` untouched -- it does not raise. A timing run against the unbuilt backend
-# would therefore report a spectacularly fast no-op. scripts/bench_clue.py guards against that
-# independently; this script is what makes the backend real.
-#
-# The wheel does ship the C++ headers (site-packages/include/{CLUEstering,alpaka}) and the
-# pybind11 sources under BindingModules/, so the CUDA module can be built in place against the
-# very library the analysis environment already imports. Nothing else is rebuilt: only the
-# CLUE_GPU_CUDA target is asked for, so the existing serial and OpenMP .so files -- which
-# produced every result in results/ -- are left exactly as the wheel installed them.
-#
 #   ./setup/build_clue_cuda.sh
 #
-# Needs network access: the upstream CMakeLists FetchContent's alpaka 2.1.0 from GitHub for
-# its CMake target, even though the headers are vendored.
+# The conda-forge wheel ships only the CPU backends: `CLUEstering.backends` advertises
+# "gpu cuda" but the .so is absent, and `run_clue` responds by printing "CUDA module not found"
+# and returning with `cluster_ids` untouched rather than raising, so a timing run against the
+# unbuilt backend reports a very fast no-op. scripts/bench_clue.py guards against that
+# separately; this makes the backend real.
+#
+# Only the CLUE_GPU_CUDA target is built, so the serial and OpenMP libraries that produced every
+# result in results/ are left as the wheel installed them.
+#
+# Needs network access: the upstream CMakeLists fetches alpaka from GitHub for its CMake target.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
@@ -28,10 +23,10 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.4}"
 # survives running the build on a node whose GPU is busy.
 CUDA_ARCH="${CUDA_ARCH:-80}"
 
-# THE HOST COMPILER IS NOT FREE TO CHOOSE, for two independent reasons.
+# The host compiler is not free to choose, for two independent reasons.
 #
 # First, CUDA 12.4's nvcc refuses any host gcc newer than 13, and the analysis env carries
-# conda-forge gcc 14.4 -- so the CUDA compiler-id test fails before a line is compiled.
+# conda-forge gcc 14.4, so the CUDA compiler-id test fails before a line is compiled.
 #
 # Second, and less obviously, pybind11's type registry capsule is named after the C++ ABI
 # version of the compiler that built the module, and only modules whose names match can pass
@@ -60,7 +55,7 @@ SITE="$ENV_ANALYSIS/lib/python3.11/site-packages"
 SRC="$SITE/CLUEstering/BindingModules"
 BUILD="$EXTERNAL/build-clue-cuda"
 
-[ -d "$SRC/cuda" ] || { echo "no CUDA sources at $SRC/cuda -- is CLUEstering installed?" >&2; exit 1; }
+[ -d "$SRC/cuda" ] || { echo "no CUDA sources at $SRC/cuda; is CLUEstering installed?" >&2; exit 1; }
 [ -x "$CUDA_HOME/bin/nvcc" ] || { echo "no nvcc at $CUDA_HOME/bin/nvcc" >&2; exit 1; }
 
 WANT_ABI="$(required_abi)"
@@ -79,7 +74,7 @@ fi
 export PATH="$CUDA_HOME/bin:$ENV_ANALYSIS/bin:$PATH"
 export CUDACXX="$CUDA_HOME/bin/nvcc"
 
-# pybind11 is a build-time dependency the runtime wheel does not carry, and THE MAJOR VERSION
+# pybind11 is a build-time dependency the runtime wheel does not carry, and the major version
 # MATTERS. pybind11 keeps its type registry in a capsule whose name encodes an internals
 # version, and only modules sharing that version can pass each other's objects. The wheel's
 # CPU modules are v4 (pybind11 2.x); building the CUDA module against pybind11 3.x produces
@@ -95,16 +90,16 @@ PY
 PYBIND11_DIR="$("$ENV_ANALYSIS/bin/python" -c 'import pybind11; print(pybind11.get_cmake_dir())')"
 
 # A SHIM, rather than editing the CMakeLists inside site-packages. The upstream file calls
-# pybind11_add_module but never find_package(pybind11) -- it comments "include pybind11 extern
+# pybind11_add_module but never find_package(pybind11); it comments "include pybind11 extern
 # subfolder" and relies on an extern/pybind11 checkout the wheel does not ship, so configuring
 # it directly dies with "Unknown CMake command pybind11_add_module". The shim finds pybind11
 # and then add_subdirectory()s the real thing. Because add_subdirectory keeps
 # CMAKE_CURRENT_SOURCE_DIR pointing at the original location, the upstream relative include
 # paths (../../../include, where the vendored CLUEstering and alpaka headers live) still
-# resolve -- which copying the tree somewhere else would have broken.
+# resolve, which copying the tree somewhere else would have broken.
 SHIM="$EXTERNAL/build-clue-cuda-src"
-# alpaka is fetched from GitHub and is ~40 MB of headers. Kept OUTSIDE the build directory so
-# that wiping the build to reconfigure does not re-download it -- one such re-download already
+# alpaka is fetched from GitHub and is ~40 MB of headers. Kept outside the build directory so
+# that wiping the build to reconfigure does not re-download it. One such re-download already
 # failed mid-transfer and took the whole configure step with it.
 DEPS="$EXTERNAL/clue-cuda-deps"
 rm -rf "$SHIM" "$BUILD"
@@ -140,6 +135,6 @@ echo "backends now visible to the analysis environment:"
 import CLUEstering
 print(" ", CLUEstering.backends)
 if "gpu cuda" not in CLUEstering.backends:
-    raise SystemExit("CLUE_GPU_CUDA did not land in CLUEstering/lib -- build did not take")
+    raise SystemExit("CLUE_GPU_CUDA did not land in CLUEstering/lib; the build did not take")
 print("  gpu cuda is live")
 PY

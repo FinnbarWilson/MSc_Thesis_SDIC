@@ -1,19 +1,12 @@
 """The experiment definition: the overrides merge, and the guard on the event windows.
 
-`src.config` sits under every script, and two of the things it does are load-bearing for claims
-the thesis makes rather than merely convenient.
+Two things :mod:`src.config` does are load-bearing for claims the report makes. The windows must
+not overlap, or CLUE would have been tuned on the events it is scored over while the MaskFormer
+was not. And the overrides merge must be invisible to consumers, since pu200 replaces the eta
+acceptance, the thresholds and the checkpoint through it.
 
-*   **The windows must not overlap.** CLUE's parameters are tuned on one window and reported on
-    another. If they overlapped, CLUE would have been tuned on the events it is scored over
-    while the MaskFormer's working point was not -- an advantage belonging to neither algorithm.
-    The comparison is only fair because this raises.
-*   **The overrides merge is invisible to consumers.** pu200 replaces the eta acceptance, the
-    thresholds and the checkpoint through its `overrides:` block. Every script reads the merged
-    result, so a merge that dropped a key would silently score pu200 with a pu0 value.
-
-These run on dictionaries rather than on `config/experiment.yaml`, so they pin the behaviour and
-not the current contents of the file -- except the two cases that deliberately assert the real
-file loads and resolves.
+These run on dictionaries rather than on ``config/experiment.yaml``, so they pin the behaviour
+and not the file's current contents, apart from two cases that deliberately load the real file.
 """
 
 import copy
@@ -129,7 +122,7 @@ def test_merging_is_deep_and_leaves_siblings_alone():
 
 
 def test_a_list_is_replaced_not_extended():
-    """Every list here is a complete statement -- a grid, a range, an order.
+    """Every list in the config is a complete statement: a grid, a range, an order.
 
     Appending to one produces something that is not a valid value of that key.
     """

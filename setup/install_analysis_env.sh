@@ -3,16 +3,10 @@
 #
 #   ./setup/install_analysis_env.sh
 #
-# This is the half of the repository an assessor needs: src/clue, src/evaluation, src/plotting and
-# src/io import nothing but numpy/scipy/pandas/matplotlib, so the figures regenerate without a GPU
-# and without the 300 GB dataset. It is a SEPARATE environment from the training venv on purpose --
-# that separation is the repository's central design decision, not an installation detail.
-#
-# conda rather than a venv, because environment.yml explains why pip cannot do it: CLUEstering
-# needs a scikit-learn with no wheel for this python/numpy combination (pip falls back to a source
-# build and fails), and the CLUE CPU backends compile against Boost headers.
-#
-# Everything lands in external/ (gitignored).
+# Separate from the training venv on purpose: src/clue, src/evaluation, src/plotting and src/io
+# import nothing but numpy/scipy/pandas/matplotlib. conda rather than a venv because CLUEstering
+# needs a scikit-learn with no wheel for this python/numpy combination and its CPU backends
+# compile against Boost; environment.yml has the detail. Everything lands in external/.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,11 +17,9 @@ mkdir -p "$EXTERNAL"
 
 MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
 
-# curl, wget, then python, because THIS SCRIPT IS RUN INSIDE A CONTAINER ON DIAS and
-# docker://ubuntu:22.04 is the bare base image -- it ships no curl, and the original
-# `curl -fsSL ...` line failed with "curl: command not found" before conda existed to install one.
-# On DIAS the whole env must be built inside the container anyway: the host is RHEL7 with glibc
-# 2.17 and the pinned conda-forge builds of numpy 2.4 / pandas 3.0 need 2.28+.
+# curl, then wget, then python: on DIAS this runs inside a bare ubuntu:22.04 container, which
+# ships none of them reliably. The container is needed because the host is RHEL7 with glibc 2.17
+# and the pinned conda-forge builds need 2.28+.
 #
 #   apptainer exec --bind $HOME ~/ubuntu22.sif bash setup/install_analysis_env.sh
 fetch() {
@@ -53,8 +45,8 @@ export CONDA_PKGS_DIRS="$EXTERNAL/conda-pkgs"
 export CONDA_ENVS_PATH="$EXTERNAL/conda-envs"
 mkdir -p "$CONDA_PKGS_DIRS" "$CONDA_ENVS_PATH"
 
-# CLUEstering's wheel build runs in a pip-isolated temp environment with its OWN cmake, which does
-# not know the conda prefix and so cannot find Boost there -- it fails with
+# CLUEstering's wheel build runs in a pip-isolated temp environment with its own cmake, which does
+# not know the conda prefix and so cannot find Boost there. It fails with
 #     Could NOT find Boost (missing: Boost_INCLUDE_DIR atomic)
 # even once libboost is installed. These point that cmake at the env. Measured: with libboost
 # installed and these set, the wheel builds; without them it does not.

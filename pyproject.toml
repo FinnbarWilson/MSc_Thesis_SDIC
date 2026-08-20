@@ -1,14 +1,33 @@
-# Tool configuration only. The environment itself is conda's -- see environment.yml -- because
-# CLUEstering has to compile against Boost headers and a pip-only install of this project does
-# not get that right. Nothing here declares dependencies or makes the repository installable;
-# scripts run as `python -m scripts.<name>` from the root, which is what puts `src` on the path.
+# Tool configuration only. Dependencies live in environment.yml. Nothing here makes the
+# repository installable: scripts run as `python -m scripts.<name>` from the repository root,
+# which is what puts `src` on the path.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Report skips by default. Most of the suite needs an event store that is not on a laptop, so
-# a bare "23 passed" would otherwise read as full coverage when half the tests never ran.
+# Report skips by default: most of the suite needs an event store that is not on a laptop, so a
+# bare "62 passed" would otherwise read as full coverage.
 addopts = "-ra"
-# src/maskformer/ mirrors a hepattn experiment directory: its files import torch, lightning and
-# hepattn, none of which are installed in the analysis environment. It holds no tests and should
-# not be walked looking for them.
+# src/maskformer/ mirrors a hepattn experiment directory and imports torch, lightning and
+# hepattn, none of which are in the analysis environment. It holds no tests.
 norecursedirs = ["src/maskformer", ".git", "results", "figures"]
+
+[tool.ruff]
+line-length = 120
+# These three are verbatim upstream hepattn files (see src/maskformer/README.md); the rest of
+# the directory is this project's own and is linted.
+extend-exclude = [
+    "src/maskformer/hepattn_colliderml/data.py",
+    "src/maskformer/hepattn_colliderml/model.py",
+    "src/maskformer/hepattn_colliderml/main.py",
+]
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "C4", "ARG", "SIM"]
+ignore = [
+    "E501",    # long lines are caught by the formatter, not the linter
+    "B905",    # zip(strict=) is used where it matters, not everywhere
+    "SIM108",  # a ternary is not always clearer than an if/else
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG"]  # pytest fixtures arrive as arguments that the body may not name

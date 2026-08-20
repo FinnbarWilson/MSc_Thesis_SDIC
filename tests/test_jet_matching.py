@@ -1,16 +1,9 @@
 """Jet matching and the four-vector sum behind the jet figure.
 
-`src.evaluation.jets` turns each method's clusters into anti-k_t jets and pairs them with
-reference jets built the same way from the truth partition of the same cells. Those pairs are
-what the jet figure and the jet columns of the threshold table are computed from, so a matching
-error moves a published ratio without moving anything in the per-object tables.
-
-The parts tested here need neither `fastjet` nor an event store: `delta_r`, the greedy match, and
-the cluster four-vector sum. `run_antikt` is a thin call into fastjet and is not re-tested.
-
-The phi wrap is the reason this file exists. Two jets either side of +/-pi are adjacent, and the
-same hazard is already pinned for CLUE's metric (`test_clue_periodic`) and for the raw-parquet
-isolation (`test_colliderml_reader`); the jet matcher was the remaining place it was unguarded.
+A matching error moves a published ratio without moving anything in the per-object tables. The
+parts tested here need neither `fastjet` nor an event store: `delta_r`, the greedy match and the
+cluster four-vector sum. The phi wrap is the reason this file exists; `run_antikt` is a thin
+call into fastjet and is not re-tested.
 """
 
 import numpy as np
@@ -22,7 +15,7 @@ from src.evaluation.jets import Jets, cluster_four_vectors, delta_r, match
 
 
 def test_delta_r_wraps_across_pi():
-    """Jets at 3.1 and -3.1 are 0.083 apart, not 6.2 -- inside the match cone, not outside."""
+    """Jets at 3.1 and -3.1 are 0.083 apart, not 6.2, so inside the match cone."""
     d = delta_r(0.0, 3.1, 0.0, -3.1)
     assert d == pytest.approx(2 * np.pi - 6.2, abs=1e-9)
     assert d < 0.3

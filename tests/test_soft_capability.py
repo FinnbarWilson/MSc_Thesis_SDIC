@@ -1,21 +1,16 @@
-"""Checks on the multi-owner capability scoring.
+"""The multi-owner capability scoring, in both directions.
 
-The point of the soft metric is that it stops actively suppressing one method's capability
-without inventing an advantage for it. Neither half of that is self-evident from the code, so
-both are pinned here:
+The soft metric must stop suppressing one method's capability without inventing an advantage
+for it, and neither half is self-evident from the code:
 
-*   **Not favouring.** A method whose clusters never overlap must come through the fractional
-    machinery with exactly the score a partitioning metric would give it. If normalisation or
-    the min-overlap silently changed CLUE's numbers, the comparison would be rigged in a way
-    no aggregate would reveal.
-*   **Not suppressing.** Under an exclusive prediction the soft score must *credit* the
-    sub-dominant truth contributions in cells that were won, which the exclusive truth throws
-    away. So CLUE's soft efficiency should sit at or above its exclusive efficiency, never
-    below.
+*   Not favouring: a method whose clusters never overlap must score exactly what a partitioning
+    metric would give it.
+*   Not suppressing: under an exclusive prediction the soft score must credit the sub-dominant
+    truth contributions in cells that were won, so soft efficiency sits at or above exclusive
+    efficiency.
 
-The headline of the study -- that particles owning no cell exclusively are unreachable for a
-partitioning method and reachable for a mask-based one -- is a structural claim, so it gets a
-structural test rather than one pinned to a measured rate.
+That particles owning no cell exclusively are unreachable for a partitioning method is a
+structural claim, so it gets a structural test rather than one pinned to a measured rate.
 """
 
 
@@ -27,8 +22,6 @@ from src.evaluation.soft import capability_summary, hard_weights, score_event_so
 from src.io.event_store import logit_code_for_threshold, probability_for_logit_code
 from tests.conftest import open_smoke_store
 
-# The store path, the skip and the caching all live in tests/conftest.py, so that
-# SMOKE_STORE=... points every module at the same one -- including a pu200 store.
 _store = open_smoke_store
 
 
@@ -64,12 +57,12 @@ def test_a_perfect_partition_scores_exactly_its_exclusive_share():
     """The exact identity that says what the soft metric costs a partitioning method.
 
     Score the truth partition as a prediction. Under the exclusive metric it is perfect by
-    construction. Under the soft metric its efficiency is exactly `exclusive_share` -- the
-    fraction of the particle's energy living in cells it dominates -- because those are the
+    construction. Under the soft metric its efficiency is exactly `exclusive_share`, the
+    fraction of the particle's energy living in cells it dominates, because those are the
     only cells any partition can award it.
 
     So `exclusive_share` is a hard ceiling on soft efficiency for the whole partitioning
-    class, and the shortfall from 1 is precisely the energy only overlapping masks can reach.
+    class, and the shortfall from 1 is the energy only overlapping masks can reach.
     That is the capability being measured, and it is why the soft score is not simply the
     exclusive score with extra credit bolted on.
     """
@@ -85,7 +78,7 @@ def test_a_perfect_partition_scores_exactly_its_exclusive_share():
         soft.loc[owns_something, "exclusive_share"],
         atol=1e-9,
     )
-    # And that is strictly less than the exclusive metric's perfect score, which is the point.
+    # Strictly less than the exclusive metric's perfect score, which is what this pins.
     assert soft.loc[owns_something, "eff_e"].mean() < hard.loc[owns_something, "eff_e"].mean()
 
 
@@ -120,7 +113,7 @@ def test_particles_with_no_exclusive_cell_are_flagged():
     flagged = soft["no_exclusive_cell"].to_numpy()
     assert flagged.any(), "expected some particles owning no cell exclusively"
     # They are flagged because the exclusive partition gave them nothing, yet the multi-owner
-    # truth says they deposited energy -- which is precisely why they are worth studying.
+    # truth says they deposited energy, which is why they are worth studying.
     assert (soft.loc[flagged, "e_dep_exclusive"] == 0).all()
     assert (soft.loc[flagged, "e_dep_multi"] > 0).all()
 
@@ -130,9 +123,9 @@ def test_an_exclusive_method_barely_reaches_an_impossible_particle():
 
     A particle owning no cell exclusively has no cell of its own for a partition to award it,
     so no cluster is ever *about* it. It is not quite unreachable, though, and the exception
-    is worth knowing rather than asserting away: a cluster built around some other particle
+    is recorded rather than asserted away: a cluster built around some other particle
     may contain cells this one contributed to sub-dominantly, and the soft metric credits that
-    energy. So a partitioning method scores a little above zero here by accident -- measured
+    energy. So a partitioning method scores a little above zero here by accident: measured
     at 0.007 for CLUE over the full window, against 0.534 for overlapping masks.
 
     Asserted as "negligible" rather than "exactly zero" because exact zero is a property of

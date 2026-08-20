@@ -1,16 +1,13 @@
-"""The scorer's self-consistency checks.
+"""Self-consistency of the scorer: the truth fed back in as a prediction.
 
-The most valuable test of a clustering metric is to feed it the truth as if it were a
-prediction. Efficiency must come out at exactly 1, every particle must match exactly one
-cluster, and nothing may be reported as split, merged or fake. Anything else is an indexing
-bug in the matcher or the overlap matrix, not a property of any algorithm -- and it would be
-invisible in a real run, where all these numbers are legitimately below 1.
+Efficiency must come out at exactly 1, every particle must match exactly one cluster, and
+nothing may be reported as split, merged or fake. Anything else is an indexing bug in the
+matcher or the overlap matrix, and would be invisible in a real run where every number is
+legitimately below 1.
 
-Energy *purity* is the interesting exception, and it is asserted to be below 1 on purpose:
-a cell owned by one particle still contains energy from others, including the many particles
-below the pT cut, and that contamination counts against purity by design. A purity of
-exactly 1 here would mean the denominator had been quietly restricted to target energy,
-which would flatter both algorithms.
+Energy purity is asserted to be *below* 1 on purpose: a cell owned by one particle still holds
+energy from others, including particles below the pT cut, and that contamination counts against
+purity by design.
 """
 
 
@@ -21,8 +18,6 @@ from src.evaluation.matching import contamination, fragmentation, hungarian_matc
 from src.evaluation.metrics import local_density, score_event
 from tests.conftest import open_smoke_store
 
-# The store path, the skip and the caching all live in tests/conftest.py, so that
-# SMOKE_STORE=... points every module at the same one -- including a pu200 store.
 _store = open_smoke_store
 
 

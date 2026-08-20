@@ -1,37 +1,10 @@
-"""Styling and binning for the eight thesis figures, which `scripts.make_thesis_figures` draws.
+"""Styling and binning helpers for the eight thesis figures.
 
-These are sized for a 12pt A4 document with 1 inch margins, at 0.8 of a 6.5 inch textwidth, and
-they use plain scienceplots so the figures look like the rest of the literature rather than like
-this project. `src.plotting.style` is the separate, smaller styling for the dataset-composition
-figures, which are not in the thesis.
+Figures are 5.2 inches wide, which is 0.8 textwidth in a 12pt A4 document with 1 inch margins.
+Include them at that width and the type comes out the size set here rather than rescaled.
 
-LAYOUT CONTRACT
-
-Every figure is 5.2 inches wide, which is 0.8 textwidth at those page settings, so
-`\\includegraphics[width=0.8\\textwidth]{...}` reproduces the sizes chosen here rather than
-rescaling the type. Two heights only:
-
-    WIDE    5.2 x 2.7   a single row of two panels
-    TALL    5.2 x 4.6   two rows of two panels
-
-Fonts are set once, in points that survive that scaling: at 0.8 textwidth a 9pt axis label in the
-figure lands at roughly 9pt on the page, so the figure type matches the body type instead of
-shrinking to unreadable.
-
-PANEL GRAMMAR, so a reader learns it once
-
-    columns are DATASETS   pileup 0 on the left, pileup 200 on the right
-    rows are QUANTITIES    the thing being measured
-    x is always the TRUE particle energy where an energy axis appears
-
-That last one is a correction to the working figures, which in one place plotted cluster energy
-and particle energy on the same axis. Every energy axis here is the truth, and every cluster
-quantity is taken from the cluster MATCHED to that particle, so a reader never has to ask which
-energy is meant.
-
-COLOURS come from the scienceplots cycle, assigned by role rather than hand-picked: each method
-takes a fixed position in the cycle, so its identity is stable across figures without importing a
-second palette's taste.
+Columns are datasets, rows are quantities, and every energy axis is the truth particle's.
+Colours are assigned by role, so a method keeps its identity across figures.
 """
 
 from __future__ import annotations
@@ -57,10 +30,8 @@ MARKERS: Mapping[str, str] = {
     "maskformer": "o", "clue": "s",
     "oracle_resolution": "v",
 }
-#: Line style per method, which carries the identity once the markers are gone. The binned figures
-#: are drawn as step outlines (see `draw_steps`), where a marker at a bin centre would sit in the
-#: middle of a flat segment and say nothing the segment does not. Two solid steps of similar
-#: lightness are hard to follow where they cross, so the second method is dashed instead.
+#: Line style per method, which carries the identity in the step outlines `draw_steps` draws,
+#: where a marker at a bin centre would say nothing the flat segment does not.
 LINESTYLES: Mapping[str, str] = {
     "maskformer": "-", "clue": "--",
     "oracle_resolution": ":",
@@ -69,20 +40,13 @@ REFERENCES = frozenset({"oracle_resolution"})
 DATASETS: tuple[str, ...] = ("pu0", "pu200")
 DATASET_LABELS: Mapping[str, str] = {"pu0": "pileup 0", "pu200": "pileup 200"}
 
-#: Transverse-momentum bins, shared by every differential figure so the panels line up.
-#:
-#: pT RATHER THAN ENERGY, changed 2026-08-13, and the reason is not only that the comparison
-#: literature plots pT. On this sample the two axes disagree about the shape: median E/pT is 1.75
-#: and 10.9% of targets sit beyond |eta| = 2.44, so binning by ENERGY mixes "energetic" with
-#: "forward" and produces a high-energy fall that is partly geometry. Binned by pT the same
-#: efficiency curve dips and recovers (0.590 -> 0.682 in the top bin) instead of falling away.
-#: Energy remains the metric WEIGHT -- eff_e and pur_e are unchanged; only the binning variable
-#: moved.
+#: Transverse-momentum bins, shared by every differential figure so the panels line up. pT
+#: rather than energy, because binning by energy mixes "energetic" with "forward" on this
+#: sample. Energy remains the metric weight; only the binning variable is pT.
 PT_BINS_DIFFERENTIAL = np.array([0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 200.0])
 E_BINS = PT_BINS_DIFFERENTIAL
 
-#: Jet bins start at the 25 GeV analysis threshold -- below it there are no jets to bin -- and run
-#: to where a ttbar event stops producing them.
+#: Jet bins start at the 25 GeV analysis threshold and run to where ttbar stops producing jets.
 JET_PT_BINS = np.array([25.0, 35.0, 50.0, 75.0, 110.0, 160.0, 250.0, 400.0])
 JET_MIN_PT = 25.0
 
@@ -94,11 +58,8 @@ def apply(latex: bool | None = None) -> None:
 
     Args:
         latex: render text with a real LaTeX installation rather than matplotlib's mathtext.
-            ``None`` (the default) reads the ``CALO_FIGURE_LATEX`` environment variable, so the
-            choice can be made once for a whole session. It is **off** by default because neither
-            compute cluster this work runs on has a LaTeX installation, and matplotlib raises at
-            draw time rather than falling back when one is missing. Turn it on where the thesis is
-            typeset, so the figures use the document's own fonts and maths.
+            ``None`` reads the ``CALO_FIGURE_LATEX`` environment variable. Off by default,
+            because matplotlib raises at draw time rather than falling back when TeX is absent.
     """
     global _COLOURS
     if latex is None:
@@ -112,17 +73,13 @@ def apply(latex: bool | None = None) -> None:
 
         warnings.warn("scienceplots missing; falling back to matplotlib defaults", stacklevel=2)
     if latex:
-        # scienceplots' own preamble covers siunitx and amsmath; this adds nothing to it and only
-        # asserts the mode, so a missing LaTeX fails here with a clear message rather than midway
-        # through the eighth figure.
         plt.rcParams.update({"text.usetex": True})
     plt.rcParams.update({
         "figure.dpi": 140,
         "savefig.dpi": 400,
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.02,
-        # Sized for 0.8 textwidth in a 12pt document: the figure is not rescaled much, so these
-        # land close to body-text size on the page.
+        # Sized for 0.8 textwidth in a 12pt document, so these land near body-text size.
         "font.size": 9,
         "axes.labelsize": 9,
         "axes.titlesize": 9,
@@ -131,9 +88,7 @@ def apply(latex: bool | None = None) -> None:
         "legend.fontsize": 8,
     })
     cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    # Assigned by ROLE, not by position in a list, so removing a method does not repaint the
-    # others. The two carrying the comparison take scienceplots' blue and green -- the cycle's
-    # first two and the pair that reads best together.
+    # By role, not by position, so removing a method does not repaint the others.
     _COLOURS = {
         "maskformer": cycle[0],        # blue
         "clue": cycle[1],              # green
@@ -145,29 +100,13 @@ def colour(algo: str) -> str:
     return _COLOURS.get(algo, "#666666")
 
 
-def draw(ax, algo, x, y, yerr=None, dashed: bool | None = None):
-    """One series, styled consistently. References dashed so they survive greyscale."""
-    ref = algo in REFERENCES if dashed is None else dashed
-    ax.errorbar(x, y, yerr=yerr, color=colour(algo), marker=MARKERS.get(algo, "o"),
-                linestyle="--" if ref else "-", linewidth=1.0, markersize=3.0,
-                alpha=0.75 if ref else 1.0, label=LABELS.get(algo, algo), capsize=0)
-
 
 class SplitKey:
     """A legend key split down the middle, one method's style on each half.
 
-    THE ENTRY THAT BELONGS TO BOTH METHODS IS THE PROBLEM THIS SOLVES. Two figures use a second
-    visual channel on top of colour -- lightness for the three fates in `energy_budget`, weight for
-    the two curves in `shower_profile` -- and that channel means the same thing for MaskFormer and
-    for CLUE. Drawn in either method's colour the key would claim to belong to that method, so both
-    figures previously drew those entries in a neutral dark grey: a swatch in a colour that appears
-    nowhere in the panels, which the reader has to work out is standing in for "either of these".
-
-    A key split down its middle says it directly. The left half is drawn in the first method's
-    colour and style and the right half in the second's, so the swatch is made of exactly the two
-    things it describes and the entry reads as "this, in both colours" without a detour through the
-    caption. `algos` is in the same order as the method entries above it in the key, so left-then-
-    right matches top-then-bottom.
+    For entries describing a second visual channel: lightness for the fates in `energy_budget`,
+    weight for the two curves in `shower_profile`. Both mean the same thing for either method, so
+    a key in one method's colour would claim to belong to it.
 
     Args:
         algos: the methods to split across, left to right.
@@ -187,8 +126,9 @@ class SplitKey:
 class _SplitKeyHandler(HandlerBase):
     """Draws a `SplitKey` as n abutting segments across the width of one legend handle."""
 
-    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize,
-                       trans):
+    # Signature fixed by matplotlib's HandlerBase; not every argument is used.
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height,  # noqa: ARG002
+                       fontsize, trans):  # noqa: ARG002
         artists = []
         n = len(orig_handle.algos)
         for i, algo in enumerate(orig_handle.algos):
@@ -215,12 +155,9 @@ def legend_below(fig, ncol: int = 3, y: float = 0.0, extra=None, handlelength: f
 
     Args:
         extra: ``(handle, label)`` pairs appended after the panel's own entries, for keys that
-            describe a second channel rather than a series -- see `SplitKey`. Passing them here
-            rather than as empty proxy artists on the panel keeps handles that no axes can produce
-            (a split swatch is not something `ax.plot` returns) out of the drawing code.
-        handlelength: widen the swatches, in font-size units. A split key needs the room: at the
-            default 1.5 each half is about six points, which is too little for a dash pattern to
-            show more than one dash.
+            describe a second channel rather than a series. See `SplitKey`.
+        handlelength: widen the swatches, in font-size units. A split key needs the room, each
+            half being about six points at the default.
     """
     handles, labels = fig.axes[0].get_legend_handles_labels()
     for handle, label in extra or ():
@@ -232,31 +169,13 @@ def legend_below(fig, ncol: int = 3, y: float = 0.0, extra=None, handlelength: f
                    frameon=False, handler_map=HANDLER_MAP, **kw)
 
 
-def band(ax, algo, x, lo, hi):
-    """Shade an uncertainty interval. A band, not caps.
-
-    With seven bins and two methods, capped error bars produce fourteen sets of whiskers that
-    collide with the markers and with each other. A filled band reads as one continuous statement
-    about where the curve could lie, and stays legible when two of them overlap.
-    """
-    if len(x) == 0:
-        return
-    ax.fill_between(x, lo, hi, color=colour(algo), alpha=0.18, linewidth=0, zorder=1)
-
 
 def _step_path(lo, hi, y):
     """A piecewise-constant path over bins, broken by NaN wherever a bin is missing.
 
-    Every quantity in these figures is measured in bins, and a marker at the geometric centre of
-    each bin joined to the next by a straight line says nothing about how wide those bins are. The
-    top edge of a histogram does, and because the measurements move smoothly across the range it
-    still reads as a curve.
-
-    The NaN break is the part that has to be right. `binned_proportion`, `binned_bootstrap` and
-    `binned_ratio` all drop a bin holding fewer than `min_count` entries, so the bins reaching this
-    function are not guaranteed contiguous. A single path drawn through them would put a horizontal
-    segment across a bin that was never measured, which is the one error this style could introduce
-    that a reader could not see. Contiguous runs are therefore emitted separately.
+    The NaN break matters: the binning helpers drop a bin holding fewer than `min_count`
+    entries, so the bins reaching here are not contiguous, and a single path through them would
+    draw a horizontal segment across a bin that was never measured.
 
     Args:
         lo, hi: the lower and upper edge of each bin, in plotting coordinates.
@@ -307,11 +226,9 @@ def band_steps(ax, algo, lo, hi, ylo, yhi, alpha: float = 0.18):
 def bin_edges_for(x, edges):
     """(lo, hi) edges of the bin each plotted point came from.
 
-    The summary carries one x per bin rather than the edges, and the two figure families use
-    different conventions for it: the differential figures place a point at the geometric mean of
-    its bin and `anatomy.profile` at the arithmetic midpoint. Both fall strictly inside their own
-    bin, so a single digitize recovers the edges for either without the summary having to grow a
-    column, and without a committed summary from another machine needing to be regenerated.
+    The summary carries one x per bin rather than the edges, and the two figure families place it
+    differently, at the geometric mean or the arithmetic midpoint. Both fall strictly inside their
+    own bin, so one digitize recovers the edges for either.
     """
     x = np.asarray(x, dtype=float)
     edges = np.asarray(edges, dtype=float)
@@ -323,8 +240,7 @@ def binned_proportion(x, passed, bins, min_count: int = 20):
     """(centres, p, lo, hi) for a binomial proportion, with an exact Clopper-Pearson interval.
 
     Efficiency and purity are counts of successes out of trials, so the interval is exact rather
-    than bootstrapped. Clopper-Pearson is conservative and behaves correctly at the edges, where a
-    bin with every particle succeeding gets an interval reaching 1 instead of a zero-width bar.
+    than bootstrapped. Bins holding fewer than `min_count` entries are dropped.
     """
     from src.evaluation.differential import clopper_pearson
 
@@ -346,15 +262,21 @@ def binned_proportion(x, passed, bins, min_count: int = 20):
 
 def binned_bootstrap(x, values, events, bins, statistic="median", n_boot: int = 200,
                      min_count: int = 20, seed: int = 0):
-    """(centres, stat, lo, hi) with a 68% interval from resampling EVENTS.
+    """(centres, stat, lo, hi) with a 68% interval from resampling events.
 
-    Medians, means of pooled quantities and resolutions are not binomial proportions, so the
-    interval comes from a bootstrap. The resampling unit is the EVENT, never the particle:
-    particles in one event share cells, occupancy and a shower environment, so treating them as
-    independent trials would understate the spread -- often badly, since a busy event contributes
-    hundreds of correlated entries at once.
+    Medians and resolutions are not binomial proportions, so the interval is bootstrapped. The
+    resampling unit is the event, never the particle: particles in one event share cells and
+    occupancy, and treating them as independent trials understates the spread.
+
+    Args:
+        statistic: ``"median"``, ``"mean"``, or ``"resolution"`` (IQR/1.349 over the median).
+
+    Raises:
+        ValueError: on an unknown `statistic`.
     """
-    x = np.asarray(x); values = np.asarray(values); events = np.asarray(events)
+    x = np.asarray(x)
+    values = np.asarray(values)
+    events = np.asarray(events)
     idx = np.digitize(x, bins) - 1
     rng = np.random.default_rng(seed)
     uniq = np.unique(events)
@@ -402,19 +324,14 @@ def binned_ratio(x, numerator, denominator, events, bins, n_boot: int = 200,
                  min_count: int = 20, seed: int = 0):
     """(centres, ratio, lo, hi) for sum(numerator)/sum(denominator) in each bin.
 
-    A RATIO OF SUMS, not a mean of per-object ratios, and the distinction matters here rather
-    than being pedantry. The per-particle counts this is built from are heavily skewed: at
-    50-200 GeV CLUE's matched cluster recovers a mean of 11.1 cells but a MEDIAN of 1, because
-    it usually shatters a large shower and occasionally captures most of one. A mean over that
-    distribution describes neither behaviour, and reversed the sign of the measured trend --
-    rising on the mean, falling on the median.
-
-    Summing first is immune to that: it asks what fraction of all the truth cells in this energy
-    bin ended up correctly assigned, which is a well-posed question whatever the per-particle
-    distribution looks like. The interval is a bootstrap over EVENTS, as everywhere else.
+    A ratio of sums, not a mean of per-object ratios. The per-particle distribution is bimodal
+    for a method that usually fragments a large shower and occasionally captures most of one, and
+    a mean over it describes neither behaviour. The interval is a bootstrap over events.
     """
-    x = np.asarray(x); num = np.asarray(numerator, dtype=float)
-    den = np.asarray(denominator, dtype=float); events = np.asarray(events)
+    x = np.asarray(x)
+    num = np.asarray(numerator, dtype=float)
+    den = np.asarray(denominator, dtype=float)
+    events = np.asarray(events)
     idx = np.digitize(x, bins) - 1
     rng = np.random.default_rng(seed)
     uniq = np.unique(events)
@@ -426,14 +343,11 @@ def binned_ratio(x, numerator, denominator, events, bins, n_boot: int = 200,
         nb, db, eb = num[sel], den[sel], events[sel]
         order = np.argsort(eb, kind="stable")
         nb, db, eb = nb[order], db[order], eb[order]
-        # Per-event partial sums: a bootstrap replicate is then a sum over drawn events, with no
-        # need to re-gather the underlying rows.
+        # Per-event partial sums, so a bootstrap replicate is a sum over drawn events rather
+        # than a re-gather of the underlying rows.
         starts = np.searchsorted(eb, uniq, side="left")
         stops = np.searchsorted(eb, uniq, side="right")
         present = np.flatnonzero(stops > starts)
-        cn = np.add.reduceat(np.concatenate([nb, [0.0]]), starts[present]) if present.size else np.zeros(0)
-        cd = np.add.reduceat(np.concatenate([db, [0.0]]), starts[present]) if present.size else np.zeros(0)
-        # reduceat over ragged blocks: recompute exactly rather than trusting the boundary case
         cn = np.array([nb[starts[i]:stops[i]].sum() for i in present])
         cd = np.array([db[starts[i]:stops[i]].sum() for i in present])
         if present.size < 2:
@@ -451,20 +365,13 @@ def binned_ratio(x, numerator, denominator, events, bins, n_boot: int = 200,
     return np.array(cs), np.array(rs), np.array(los), np.array(his)
 
 
-def figsize_for(nrows: int, ncols: int) -> tuple[float, float]:
-    """Width is fixed at 0.8 textwidth; height follows the grid so panels stay near 4:3.
+def figsize_for(nrows: int) -> tuple[float, float]:
+    """Width fixed at 0.8 textwidth; height set by the row count alone.
 
-    A single-dataset column is not a temporary curiosity -- it is what these figures look like
-    until pu0 is scored -- and a 5.2 x 4.6 figure holding one narrow column of two panels is
-    unreadably tall on the page. Height therefore depends on BOTH dimensions.
+    Adding a dataset column narrows the panels rather than making the figure taller. Rows get
+    shorter as they get more numerous, so three of them still fit on a page.
     """
-    # Height is set by the ROW COUNT alone, not by the panel width. The width is fixed at 0.8
-    # textwidth, so adding a dataset column narrows the panels rather than making the figure
-    # taller -- an earlier version scaled height with panel width and produced a 5.2 x 6.0 figure
-    # for a single column, which is most of an A4 page for two panels.
     # 1.75 in of plot per row, plus 0.9 in for the shared x label and the legend beneath.
-    # Three rows would be 6.15 in at 1.75 per row, which is a full page. Rows get shorter as
-    # they get more numerous; the panels stay legible because the width never changes.
     per_row = 1.75 if nrows < 3 else 1.45
     return (5.2, round(nrows * per_row + 0.9, 2))
 
@@ -472,12 +379,10 @@ def figsize_for(nrows: int, ncols: int) -> tuple[float, float]:
 def grid(nrows: int, ncols: int, datasets: Sequence[str], sharey: str | bool = "row", sharex: str | bool = "col"):
     """Panel grid with datasets as columns, titled once along the top.
 
-    `sharex="col"` is right when every row measures the same thing against the same x, which is
-    the usual case here. It is WRONG when the rows are different coordinates: the shower-profile
-    figure puts dR (0 to 0.35) above depth (0 to 47), and sharing the axis collapsed the dR row
-    into a vertical line at the origin. Pass sharex=False there.
+    Pass ``sharex=False`` where the rows are different coordinates rather than the same one at
+    two scales: sharing the axis there collapses one row against the origin.
     """
-    size = figsize_for(nrows, ncols)
+    size = figsize_for(nrows)
     fig, axes = plt.subplots(nrows, ncols, figsize=size, sharex=sharex, sharey=sharey, squeeze=False)
     for j, ds in enumerate(datasets):
         axes[0][j].set_title(DATASET_LABELS.get(ds, ds))

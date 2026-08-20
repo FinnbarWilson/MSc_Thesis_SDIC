@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
-# Dump an event store on ce-ai-1. Replaced dump_store_pu0.sh and dump_store_pu200.sh on
-# 2026-08-12, for the same reason train.sh replaced the two training launchers.
+# Dump an event store on ce-ai-1.
 #
 # This is the step that makes the comparison controlled: CLUE does not read ColliderML, it reads
-# the store written here from the MODEL's own dataloader. Every cut the training config applied --
-# including particle_collapse_shower_secondaries, the shower-level truth definition -- therefore
-# applies to both methods by construction rather than by two configs agreeing.
+# the store written here from the MODEL's own dataloader, so every cut the training config applied
+# reaches both methods by construction rather than by two configs agreeing.
 #
-# Dump BOTH stores after training, from the windows the training config leaves free:
+# Dump both stores after training, from the windows the training config leaves free:
 #
 #   CKPT=<ckpt> ./dump_store.sh pu0   tune    # events [20000, 20050),  50 events
 #   CKPT=<ckpt> ./dump_store.sh pu0   eval    # events [20250, 20750), 500 events
 #   CKPT=<ckpt> ./dump_store.sh pu200 tune    # events [7000, 7050),    50 events
 #   CKPT=<ckpt> ./dump_store.sh pu200 eval    # events [7500, 8000),   500 events
 #
-# The tune window is the training run's own validation split: unseen by the optimiser, but seen by
-# model selection. Same status as CLUE's tuning window, which is the point -- both methods pick
-# their working point on the same events and neither picks it on the reported ones.
+# The tune window is the training run's own validation split: unseen by the optimiser, seen by
+# model selection, which is the same status CLUE's tuning window has. Neither method picks its
+# working point on the reported events.
 #
 # Then set dataset.<pu>.store / .tune_store in config/experiment.yaml to match, and check with
 # `python -m scripts.show_config`.
@@ -39,15 +37,15 @@ case "$DATASET:$WHICH" in
 esac
 
 # The store name encodes the EVENT WINDOW, not the pileup condition, so a pu0 and a pu200 dump of
-# the same range would collide silently -- hence the condition in the directory name.
-OUT="${OUT:-/mnt/ai-datastore/finnbar/eventstore_${DATASET}}"
+# the same range would collide silently, hence the condition in the directory name.
+OUT="${OUT:-$EXTERNAL/eventstores}"
 
 # CHUNK is the memory knob: the dump holds a whole chunk in memory while writing it. A pu200 event
 # carries ~117k cells against pu0's ~22k, so it needs a smaller chunk for the same footprint.
 # Lower it further if the dump is killed.
 if [ "$DATASET" = "pu200" ]; then CHUNK="${CHUNK:-10}"; else CHUNK="${CHUNK:-25}"; fi
 
-# INCIDENCE_TOP_K is deliberately NOT set. eval/format.py carries the measured value (16) and is
+# INCIDENCE_TOP_K is deliberately not set. eval/format.py carries the measured value (16) and is
 # the one place that choice is justified; setting it here silently overrides it, which has happened
 # once before (4 against format's 16).
 

@@ -1,67 +1,19 @@
-"""Scoring against the multi-owner truth, with fractional cell ownership on both sides.
+"""Scoring with fractional cell ownership on both the truth and the prediction side.
 
-The head-to-head in :mod:`src.evaluation.metrics` runs on an exclusive partition: one owner
-per cell in the truth, one cluster per cell in the prediction. That is the right call for
-comparing a partitioning algorithm against a mask-based one *on the task they share*, and it
-is what makes the numbers in the main figures fair. But it is not the whole question, and it
-throws away something real on both sides of the comparison:
+The head-to-head in :mod:`src.evaluation.metrics` runs on an exclusive partition, which is the
+right comparison for a partitioning algorithm against a mask-based one but discards real
+information on both sides. This module measures what that costs.
 
-*   The truth genuinely is multi-owner. A cell struck by three particles holds three
-    contributions, and the exclusive partition hands it wholly to the largest. That discards
-    ~17% of (particle, cell) associations, and about 0.4% of target particles own no cell
-    exclusively at all -- they are structurally unrecoverable by any partitioning method,
-    and the main tables can only ever report them as missed.
-*   MaskFormer's masks may overlap; it can say a cell belongs to two particles.
-    :meth:`~src.io.event_store.EventRecord.maskformer_labels` deliberately collapses that to
-    one winner so CLUE has something it can compete against. Which means the head-to-head
-    measures the model with its distinguishing capability switched off.
+Three properties keep the result method-independent. Prediction weights are normalised per cell,
+so a method whose clusters never overlap arrives with every weight equal to 1. A particle and a
+cluster overlap in a cell by ``E_i * min(t_ai, w_ci)``, taking the minimum rather than a product
+because the two are shares of one divisible quantity. And the denominator is the particle's
+actual deposited energy, which neither method's output can move.
 
-So this module scores the same events with ownership left fractional. **The aim is not to even
-the fight.** It is that a metric which suppresses one method's distinguishing capability is
-measuring the format rather than the clustering. What makes the result fair is not that both
-methods score well but that both are measured against the same, method-independent target:
-
-*   Prediction weights are normalised per cell. An algorithm whose clusters never overlap has
-    every weight equal to 1, so CLUE arrives here unchanged and is scored by identical code
-    with no special case.
-*   The overlap of a particle and a cluster in a cell is ``E_i * min(t_ai, w_ci)`` -- the
-    energy both sides agree belongs there. ``min`` rather than a product because the two are
-    shares of one divisible quantity, not independent probabilities.
-*   The denominator is the particle's **actual deposited energy**, a property of the event
-    that neither method's output can move. The exclusive metric instead measures against the
-    energy in cells the particle dominates, which is a target defined by what a partition
-    happens to be able to express.
-
-That last point has a consequence worth stating plainly, because it looks like unfairness and
-is not. Score the truth partition as a prediction and its soft efficiency is *exactly*
-``exclusive_share`` -- the fraction of the particle's energy in cells it dominates -- not 1.
-So ``exclusive_share`` is a hard ceiling on soft efficiency for the entire partitioning class,
-and CLUE's soft efficiency will sit **below** its exclusive efficiency. The shortfall is not a
-penalty applied to CLUE; it is the measurement of the energy that only overlapping masks can
-reach, which is the quantity this module exists to report.
-
-The size is bounded and worth knowing in advance: the exclusive partition already retains
-~94% of each particle's own energy, so the aggregate effect is a few per cent. The number to
-watch is the tail -- what fraction of the particles that *no* partitioning method can recover
-does a mask-based one actually find.
-
-One honest caveat on the weights, and it turns out to be a finding rather than a caveat. A mask
-probability is a *membership* output; the model was never trained to predict what fraction of a
-cell's energy is a given particle's. So a low soft score could mean "cannot represent sharing"
-or "divides sharing badly", and :func:`sharing_diagnostics` exists to separate them.
-
-Measured, it is the second, and it is not fixable by tuning. The model divides each cell 2.08
-ways against the truth's 1.22, and ``scripts/scan_soft_threshold.py`` shows that no mask
-threshold closes the gap: at 0.95, where masks are already shedding genuine cells, it still
-divides 1.85 ways. The overlap is made of confident claims, not marginal ones. That follows
-from the architecture -- an element-wise sigmoid per (query, cell) rather than a softmax over
-queries, so nothing in the loss constrains one cell's claims to sum to anything. The model is
-never taught what a cell's division should add up to.
-
-The practical consequence: quote soft efficiency with the sharing diagnostics beside it, and
-read the shortfall as a statement about mask calibration rather than about whether the
-architecture can represent shared cells. It plainly can -- that is what the recovery of
-otherwise-unreachable particles demonstrates.
+Expect the truth partition itself to score ``exclusive_share`` here rather than 1, so
+``exclusive_share`` is a ceiling on soft efficiency for the whole partitioning class. Report soft
+efficiency with :func:`sharing_diagnostics` beside it: a mask probability is a membership output,
+not a trained estimate of a cell's energy fraction.
 """
 
 from collections.abc import Sequence
@@ -81,11 +33,10 @@ SOFT_PARTICLE_COLUMNS = [
 
 
 def hard_weights(pred_label: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Present an exclusive labelling in the same fractional form as an overlapping one.
+    """Present an exclusive labelling in the fractional form, every claim carrying weight 1.
 
-    Every claim has weight 1, which is what a partition means: the cell is wholly one
-    cluster's. Passing CLUE through this rather than through a separate code path is what
-    guarantees the two methods are scored identically here.
+    A partitioning method goes through this rather than a separate code path, so both methods
+    reach the scorer identically.
     """
     cells = np.flatnonzero(np.asarray(pred_label) >= 0)
     return np.asarray(pred_label)[cells].astype(np.int64), cells.astype(np.int64), np.ones(cells.size)
@@ -94,11 +45,10 @@ def hard_weights(pred_label: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
 def _cell_join(
     left_cell: np.ndarray, right_cell: np.ndarray, n_hits: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Index pairs of entries that fall in the same cell, for two cell-sorted arrays.
+    """Index pairs of entries falling in the same cell, for two cell-sorted arrays.
 
-    Both sides have only a handful of entries per cell -- a few truth contributors, a few
-    accepting queries -- so the join is small. It is built with repeats rather than a Python
-    loop over cells because there are tens of thousands of them per event.
+    Built with repeats rather than a loop over cells, of which there are tens of thousands per
+    event.
     """
     right_per_cell = np.bincount(right_cell, minlength=n_hits)
     repeats = right_per_cell[left_cell]
@@ -185,15 +135,13 @@ def score_event_soft(
         eff[t] = np.divide(overlap[t, c], truth_total[t], out=np.zeros(t.size), where=truth_total[t] > 0)
         pur[t] = np.divide(overlap[t, c], pred_total[c], out=np.zeros(c.size), where=pred_total[c] > 0)
 
-    # The exclusive share is the diagnostic that makes this table worth keeping: it says how
-    # much of each particle a partitioning method could even in principle have reached, and
-    # `no_exclusive_cell` flags the particles for which that is nothing at all.
+    # The exclusive share says how much of each particle a partitioning method could reach at
+    # all; `no_exclusive_cell` flags those for which that is nothing.
     exclusive = np.zeros(n_truth)
     owned = record.truth_label >= 0
     if owned.any():
-        # Calibrated, like every other energy here. `truth_deposit` is raw, and the two
-        # differ by the ~40x sampling factor, so mixing them silently scales the share by
-        # 1/40 and makes it look as though a partition reaches almost none of its particle.
+        # Calibrated, like every other energy here. `truth_deposit` is raw, and the two differ
+        # by the ~40x sampling factor, and mixing them scales the share by 1/40.
         deposit = record.truth_deposit * calib
         exclusive = np.bincount(record.truth_label[owned], weights=deposit[owned], minlength=n_truth)
 
@@ -226,18 +174,12 @@ def score_event_soft(
 
 
 def _effective_claims(cell: np.ndarray, weight: np.ndarray, n_hits: int) -> float:
-    """Mean perplexity of each cell's division: how many ways it is *effectively* split.
+    """Mean perplexity of each cell's division: how many ways it is effectively split.
 
-    A raw count of claims cannot be compared across methods here, because it depends on how
-    many claims each method happens to emit rather than on how it divides a cell. The mask
-    head emits one entry per cell above a probability threshold; the incidence head is a
-    softmax over queries and is stored as a fixed top-k, so its raw count is pinned to k --
-    measured at exactly 4.000 when k was 4, which is the truncation reporting itself rather
-    than the model. Perplexity, ``exp(-sum p log p)`` over a cell's normalised weights, is
-    free of that: twelve extra claims of weight 0.001 each move it almost not at all.
-
-    Compare against the truth value computed the same way, not against 1: truth divides a
-    cell 1.22 ways by raw count, and its perplexity is the number to hold this against.
+    ``exp(-sum p log p)`` over a cell's normalised weights. A raw count of claims depends on how
+    many claims a method emits rather than on how it divides a cell; perplexity does not, so it
+    is the figure to use when comparing methods that emit different numbers of claims. Compare
+    against the truth value computed the same way, not against 1.
     """
     cell = np.asarray(cell)
     weight = np.asarray(weight, dtype=np.float64)
@@ -251,20 +193,16 @@ def _effective_claims(cell: np.ndarray, weight: np.ndarray, n_hits: int) -> floa
 
 
 def sharing_diagnostics(record, pred_cell: np.ndarray, pred_weight: np.ndarray | None = None) -> dict:
-    """How often each side says a cell is shared, which is what makes the soft numbers legible.
+    """How often each side says a cell is shared, in raw and perplexity-weighted form.
 
-    Without this the soft efficiency looks like a bug. A method whose masks overlap twice as
-    often as the truth does has its per-cell weights halved by the normalisation, so the
-    energy it can be credited with in a contested cell is capped well below the particle's
-    actual share and its soft efficiency lands *below* its exclusive efficiency.
+    The soft score folds together two questions: whether a method can represent a shared cell,
+    and whether it divides one in the right proportions. These numbers separate them. A method
+    over-claiming cells has its per-cell weights cut by the normalisation, so its soft efficiency
+    can land below its exclusive efficiency.
 
-    That is the metric working, not failing -- over-claiming a cell is a real error and should
-    cost something. But it does mean the soft score folds together two different questions:
-    whether a method can represent a shared cell at all, and whether it divides it in the
-    right proportions. These two numbers separate them, and they are worth reporting next to
-    any soft efficiency. Note that mask probability is a *membership* output, not a trained
-    estimate of energy fraction, so some of the miscalibration is a property of what the model
-    was asked to predict rather than of how well it predicts it.
+    Args:
+        pred_cell: cell index of each predicted claim.
+        pred_weight: claim weights; when given, the perplexity-based pair is added.
     """
     claims = np.bincount(np.asarray(pred_cell), minlength=record.n_hits)
     owners = np.bincount(record.truth_indices, minlength=record.n_hits)
@@ -275,8 +213,7 @@ def sharing_diagnostics(record, pred_cell: np.ndarray, pred_weight: np.ndarray |
         "truth_shared_frac": float((owners[owners > 0] > 1).mean()) if (owners > 0).any() else 0.0,
     }
 
-    # The k-independent pair. Quote these when comparing methods that emit different numbers
-    # of claims; `claims_per_cell` above is kept because it is what earlier results reported.
+    # The k-independent pair, for comparing methods that emit different numbers of claims.
     if pred_weight is not None:
         out["eff_claims_per_cell"] = _effective_claims(pred_cell, pred_weight, record.n_hits)
         out["truth_eff_owners_per_cell"] = _effective_claims(
@@ -290,15 +227,16 @@ def capability_summary(
     working_point: float = 0.5,
     diagnostics: dict[str, list[dict]] | None = None,
 ) -> pd.DataFrame:
-    """Collapse the soft tables to the comparison this study exists to make.
+    """Collapse the soft tables to one row per method.
 
-    `impossible_recovered` is the headline. It is the share of structurally unrecoverable
-    particles -- those owning no cell exclusively -- that a method nonetheless reconstructs
-    above the working point. A partitioning method has no cell of its own to award them, so
-    its score there is near zero as a property of the algorithm class rather than of its
-    tuning: measured at 0.007 for CLUE against 0.534 for overlapping masks. The residual is
-    not quite zero because a cluster built around some *other* particle can contain cells this
-    one contributed to sub-dominantly, and that energy is credited.
+    ``impossible_recovered`` is the share of particles owning no cell exclusively that a method
+    nonetheless reconstructs above `working_point`. A partitioning method has no cell of its own
+    to award them, so its score there is near zero as a property of the algorithm class.
+
+    Args:
+        tables: per-event outputs of :func:`score_event_soft`.
+        working_point: containment a particle must reach to count.
+        diagnostics: per-method lists of :func:`sharing_diagnostics` outputs, averaged in.
     """
     rows = []
     for table in tables:
@@ -310,9 +248,6 @@ def capability_summary(
                 "n_particles": len(group),
                 "claims_per_cell": float(shared.get("claims_per_cell", float("nan"))),
                 "truth_owners_per_cell": float(shared.get("truth_owners_per_cell", float("nan"))),
-                # The k-independent pair, and the one to quote when the methods emit different
-                # numbers of claims -- which they do, since the incidence head is stored as a
-                # fixed top-k and its raw count is pinned to it.
                 "eff_claims_per_cell": float(shared.get("eff_claims_per_cell", float("nan"))),
                 "truth_eff_owners_per_cell": float(shared.get("truth_eff_owners_per_cell", float("nan"))),
                 "eff_soft": float((group["eff_e"] >= working_point).mean()),

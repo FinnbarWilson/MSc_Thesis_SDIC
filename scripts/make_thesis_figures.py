@@ -1,48 +1,17 @@
-"""The thesis figures, pileup 0 and pileup 200 side by side.
+"""Draw the eight thesis figures, pileup 0 and pileup 200 side by side.
 
-    python -m scripts.make_thesis_figures                 # every dataset that has tables
+    python -m scripts.make_thesis_figures                       # every dataset with tables
     python -m scripts.make_thesis_figures --datasets pu200
-    python -m scripts.make_thesis_figures --rebuild-anatomy
+    python -m scripts.make_thesis_figures --from-summary        # no event store needed
 
-Writes figures/thesis/*.pdf|png -- one directory, because these are cross-dataset and do not
-belong under either dataset's own folder.
+Writes ``figures/thesis/*.pdf|png``. Every dataset is first reduced to
+``results/<ds>/figure_summary.csv``, a few hundred binned points and about 20 KB. The figures
+draw from that and nothing else, so a machine holding only the committed summaries can redraw
+every column. :func:`build_summary` is the only place the aggregation happens.
 
-WHAT IS HERE
-
-Eight figures, and they are the eight the thesis uses -- nothing here is drawn and unused:
-
-  1 eff_purity      efficiency and purity against particle pT
-  2 cluster_size    cluster size against shower size, and cells recovered -- fragmenting vs merging
-  3 shower_profile  where in the shower the energy is lost: transverse, then longitudinal
-  4 response        energy response and resolution -- bias against variance
-  5 energy_budget   the three fates of a particle's energy
-  6 particle_class  efficiency and fragmentation per particle type
-  7 isolation       efficiency against crowding, with the resolution ceiling
-  8 jets            do the per-cluster errors survive into an observable
-
-DATA SOURCES, AND WHY THERE IS A SUMMARY BETWEEN THEM AND THE FIGURES
-
-Nothing here plots from a per-row table directly. Every dataset is first reduced to
-results/<ds>/figure_summary.csv -- a few hundred binned points, ~20 KB -- and the figures draw
-from that and nothing else. build_summary() is the only place the aggregation happens.
-
-That indirection exists because THE TWO COLUMNS ARE PRODUCED ON DIFFERENT MACHINES: pu0 is
-trained and scored on DIAS, pu200 on ce-ai-1, and whichever machine draws the figure needs both.
-The per-row tables cannot make that trip -- particles_*.parquet and clusters_*.parquet are ~200 MB
-at pu0 and several times that at pu200, .gitignore excludes them, and they have never been in git
-history for either dataset. The summary is small enough to commit, so `git push` on one cluster and
-`git pull` on the other is the whole transfer.
-
-What still needs local data, and so is rebuilt only for the ACTIVE dataset:
-
-  results/<ds>/anatomy_particles.parquet   figures 2-3; needs cell positions from the event store
-  results/<ds>/jets.parquet                figure 8; anti-k_t jets per event
-
-Both are caches rather than results (--rebuild-anatomy / --rebuild-jets), and both are folded into
-the summary, so a machine holding only the summary still draws all eight figures. A machine that HAS
-the per-row tables always rebuilds the summary rather than trusting the committed one: local tables
-are the fresher artefact, and a stale summary quietly surviving a rescore is the failure mode this
-arrangement is meant to prevent.
+Jets and the shower anatomy cannot be recovered from the per-row tables and are rebuilt from
+the event store for the active dataset only; both are folded into the summary. A machine that
+has the per-row tables rebuilds the summary rather than trusting the committed one.
 """
 
 from __future__ import annotations
@@ -53,19 +22,20 @@ import warnings
 from collections.abc import Mapping
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
 from src.config import settings, store_expectations, store_path
-from src.evaluation.differential import clopper_pearson
 from src.evaluation import anatomy as an
 from src.evaluation import jets as jt
+from src.evaluation.differential import clopper_pearson
 from src.evaluation.matching import hungarian_match, overlap_matrix
 from src.io.event_store import EventStore
 from src.plotting import thesis as th
 
-#: The comparison the thesis makes: one learned method against one classical one.
+#: One learned method against one classical one.
 METHODS = ("maskformer", "clue")
 OUT = Path("figures/thesis")
 
@@ -75,10 +45,8 @@ OUT = Path("figures/thesis")
 def _labels(record, method, cfg, clue_params):
     mf = cfg["maskformer"]
     if method == "clue":
-        # IMPORTED HERE, NOT AT MODULE SCOPE. src.clue.pipeline imports CLUEstering, a compiled
-        # package needed only to re-cluster events from the store. Importing it at the top would
-        # make it a hard requirement of drawing the figures, and --from-summary exists precisely so
-        # the figures can be drawn on a machine carrying nothing but the repository.
+        # Imported here, not at module scope: src.clue.pipeline imports CLUEstering, which is
+        # needed only to re-cluster events and must not become a requirement of --from-summary.
         from src.clue.pipeline import cluster_event
 
         return cluster_event(record, clue_params, coords=cfg["clue"]["coords"],
@@ -90,11 +58,10 @@ def _labels(record, method, cfg, clue_params):
 
 
 def build_anatomy(dataset: str, cfg, n_events: int) -> pd.DataFrame:
-    """One row per (particle, method): matched-cluster size, extents, and the fate profile.
+    """One row per (particle, method): matched-cluster size, extents and the fate profile.
 
-    Everything a MATCHED PAIR, so the energy axis in every figure is the true particle's and
-    never the cluster's -- the working figures mixed the two on one axis and that is the kind of
-    ambiguity a reader should not have to resolve.
+    Every row is a matched pair, so the energy axis in every figure is the true particle's and
+    never the cluster's.
     """
     clue_params = {k: v["parameters"] for k, v in
                    json.loads((Path("results") / dataset / "clue_parameters.json").read_text())["subsystems"].items()}
@@ -150,13 +117,13 @@ def build_jets(dataset: str, cfg, n_events: int) -> pd.DataFrame:
 
 
 def load_profiles(dataset: str, cfg, n_events: int):
-    """Pooled shower-frame profiles, which are aggregates and so are not worth caching per row."""
+    """Pooled shower-frame profiles. Aggregates, so not worth caching per row."""
     clue_params = {k: v["parameters"] for k, v in
                    json.loads((Path("results") / dataset / "clue_parameters.json").read_text())["subsystems"].items()}
     store = EventStore(store_path("store"), expect=store_expectations())
     per = {m: [] for m in METHODS}
-    # The event index is carried alongside, because it is the resampling unit for the profile's
-    # uncertainty band. `shower_cells` returns one event's pairs and cannot know its own index.
+    # The event index is the resampling unit for the profile's band, and `shower_cells` cannot
+    # know its own index.
     events = {m: [] for m in METHODS}
     for i, record in enumerate(store):
         if i >= n_events:
@@ -174,30 +141,14 @@ def load_profiles(dataset: str, cfg, n_events: int):
 
 
 def profile_with_interval(cells, coord: str, edges: np.ndarray, n_boot: int = 200):
-    """(centres, {series: (fraction, lo, hi)}) for a shower profile, resampled over EVENTS.
+    """(centres, {series: (fraction, lo, hi)}) for a shower profile, resampled over events.
 
-    The profile is a RATIO OF SUMS in each bin -- energy of a given fate over deposited energy --
-    so the interval has to be built by resampling whole events and recomputing the ratio, exactly
-    as `th.binned_ratio` does for the cluster-size figure. Resampling cells or particles would
-    understate it: a shower contributes many correlated cells and an event many correlated showers.
+    The profile is a ratio of sums in each bin, so the interval is built by resampling whole
+    events and recomputing the ratio, as `th.binned_ratio` does elsewhere.
 
-    This figure carried no uncertainty at all until now, and the discussion leans on one bin of it
-    -- CLUE falling back in the deepest layers -- which is precisely the kind of claim that needs a
-    band to be worth making.
-
-    TWO SERIES, NOT ONE, and the second is CUMULATIVE. Drawing only the recovered fraction leaves
-    the rest of each bin unaccounted for, so a reader cannot tell energy the method gave to a
-    neighbouring cluster from energy it left in no cluster at all -- which is the distinction the
-    whole discussion of failure modes rests on, and which figure 5 already makes for the event as a
-    whole. `recovered_taken` is recovered PLUS taken by another cluster, so the two curves and the
-    line at 1 partition each bin into the same three fates as that figure: recovered below the
-    first curve, taken between the two, and unclustered above the second. The cumulative form is
-    what makes that reading work; three independent curves per method would be six lines a panel
-    and would not visibly close.
-
-    Both series come out of one pass. `an.profile` already splits every bin by fate and the
-    bootstrap already builds a per-(event, bin) matrix, so the second series costs one more
-    numerator matrix rather than a second scan over several million cell rows.
+    Two series, the second cumulative: ``recovered_taken`` is recovered plus taken by another
+    cluster, so the two curves and the line at 1 partition each bin into the same three fates as
+    the energy-budget figure. Both come out of one pass over the cells.
     """
     centres, truth, fates = an.profile(cells, coord, edges)
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -243,9 +194,8 @@ def profile_with_interval(cells, coord: str, edges: np.ndarray, n_boot: int = 20
             hi = np.nanpercentile(boot, 84.135, axis=0)
         out[name] = (value, lo, hi)
 
-    # The three fates are exhaustive per cell, so the cumulative curve cannot exceed 1 and cannot
-    # sit below the recovered one. A figure that silently failed either would be entirely plausible
-    # on the page, which is the same reason fig_energy_budget asserts its own decomposition.
+    # The fates are exhaustive, so the cumulative curve cannot exceed 1 nor sit below the
+    # recovered one. Either failure would look entirely plausible on the page.
     rec, tak = point["recovered"], point["recovered_taken"]
     ok = np.isfinite(rec) & np.isfinite(tak)
     assert np.all(tak[ok] >= rec[ok] - 1e-9), "recovered exceeds recovered+taken in some bin"
@@ -255,56 +205,18 @@ def profile_with_interval(cells, coord: str, edges: np.ndarray, n_boot: int = 20
 
 # ------------------------------------------------------------------ the figure summary
 #
-# WHAT THIS IS FOR. pu0 is trained and scored on one cluster, pu200 on another, and the figures put
-# them side by side -- so one machine has to hold both columns. The per-row tables cannot travel:
-# particles_*.parquet and clusters_*.parquet are ~200 MB at pu0 and several times that at pu200,
-# .gitignore excludes them, and they have never been in git history for either dataset. Carrying
-# them by hand between clusters for every rescore is the thing this file exists to stop.
-#
-# Every one of these figures is, in the end, a handful of BINNED SERIES: binned_proportion,
-# binned_bootstrap and binned_ratio all return (x, y, lo, hi), the shower profile returns (x, y),
-# and the energy budget is three scalars per method. That is a few hundred numbers per dataset --
-# ~20 KB of CSV against ~200 MB of parquet, and small enough to commit.
-#
-# SO THE AGGREGATION HAPPENS EXACTLY ONCE, HERE, and the figures draw from its output and nothing
-# else. A machine WITH the per-row tables rebuilds the summary and plots; a machine with only the
-# committed summary plots directly. There is no second code path that could drift from this one --
-# the numbers a reader sees are the numbers in the file either way.
-#
-# The format is deliberately long/tidy rather than one column per series: adding a method or a
-# panel then costs no schema change.
+# Every figure reduces to a handful of binned series, so the aggregation happens once, here, and
+# both code paths draw the same numbers, whether rebuilding from local tables or reading the
+# committed summary. The format is long/tidy, so adding a method or a panel needs no schema change.
 
 SUMMARY_NAME = "figure_summary.csv"
 SUMMARY_COLS = ("dataset", "figure", "panel", "algo", "x", "y", "lo", "hi")
 
-#: The photon/electron split is NOT drawn, and the charged/neutral hadron split IS. The two look
-#: like the same kind of distinction and are not.
-#:
-#: Photon against electron fails because the two ShowERS are identical -- a calorimeter has no way
-#: to tell them apart, the difference lives in the tracker -- and because the split cannot be
-#: controlled for anyway. Electrons sit at a median separation of 0.004 from their nearest target
-#: against photons' 0.064, and 41.5% of electrons have a neighbour inside dR 0.002 where only ~4%
-#: of photons do. The two populations barely share a crowding regime, so the raw 0.208 efficiency
-#: gap standardises to +0.094, +0.018 or -0.043 depending on which distribution you standardise to.
-#: A quantity whose sign depends on the weighting is not measuring the clustering.
-#:
-#: Charged against neutral hadron survives both objections. The split is not about what the
-#: calorimeter can IDENTIFY -- it cannot -- but about which targets are hard to cluster and which
-#: matter downstream, and on both counts they differ. A neutral hadron has no track, so a
-#: particle-flow chain must take it from the calorimeter alone; it is the component that limits jet
-#: energy resolution. Their dR distributions are also alike (median 0.111 against 0.113), so the
-#: comparison is not confounded the way the EM one is.
-#:
-#: And it shows something the pooled hadronic bar hides: CLUE does BETTER on neutral hadrons than
-#: charged (0.551 against 0.504) while MaskFormer does WORSE (0.650 against 0.709). The two methods'
-#: hardest hadron is not the same hadron.
-#:
-#: MUONS ARE NOT DRAWN. They deposit 0.32% of the target energy being clustered -- not the 3.1%
-#: that an earlier version of this comment claimed, which was their INCIDENT energy, most of which
-#: leaves the calorimeter by definition -- and a calorimeter clustering method is not asked to
-#: reconstruct them. The muon result is a real diagnostic of a density criterion and it is worth
-#: reporting, so it stays in the per-class table and in the text; it does not earn a third of the
-#: width of the headline class figure.
+#: Photons and electrons are pooled, because their showers are identical to a calorimeter and
+#: the two populations barely share a crowding regime. Charged and neutral hadrons are split,
+#: because they differ in how hard they are to cluster and in what a particle-flow chain needs
+#: from the calorimeter, and their dR distributions are alike. Muons are not drawn: they deposit
+#: well under a percent of the target energy, and stay in the per-class table instead.
 PARTICLE_GROUPS: Mapping[str, tuple[int, ...]] = {
     "electromagnetic": (0, 1),
     "charged_hadron": (5,),
@@ -314,34 +226,14 @@ GROUP_LABELS: tuple[str, ...] = (
     "electromagnetic\n($\\gamma$, e)", "charged\nhadron", "neutral\nhadron",
 )
 
-#: Isolation bins for the crowding figure. The first edge is 0.005 rather than 0 because bin centres
-#: are geometric means, which are undefined at zero. Targets with no other target in the event have
-#: an infinite separation and are dropped rather than piled into the last bin.
-#:
-#: Coarser than the nine bins used when this figure was pooled, because it is now cut three ways in
-#: pT as well and the bins have to keep enough targets to carry an interval.
+#: Isolation bins. The first edge is 0.005 rather than 0 because bin centres are geometric means.
+#: Targets alone in their event have infinite separation and are dropped rather than piled into
+#: the last bin. Coarse, because the figure is also cut three ways in pT.
 DR_MIN_BINS = np.array([0.005, 0.02, 0.05, 0.1, 0.2, 0.5, 5.0])
 
-#: THE CROWDING FIGURE IS CUT IN pT, and that is the whole design.
-#:
-#: Pooled over all targets the two method curves are NOT monotonic: they peak near dR 0.07 and fall
-#: away above it. That shape is an artefact. Targets isolated by more than ~0.1 are predominantly
-#: soft -- 39% of targets in the softest pT bin are isolated against 1.4% at 5-10 GeV -- so beyond
-#: the peak the isolation axis stops selecting on crowding and starts selecting on energy.
-#:
-#: The previous version drew two reference clusterings alongside, on the reasoning that their
-#: monotonic rise showed the pure crowding effect the method curves could not. That did not work.
-#: The resolution ceiling is 0.983 at dR 0.01 and 1.000 everywhere else -- a flat line at the top of
-#: the frame carrying no information. The geometric ceiling is worse than uninformative: it assigns
-#: each cell to the nearest shower axis given perfect seeds, which is one specific and suboptimal
-#: rule that methods beat elsewhere in this study, so it is not a bound, and a dashed line drawn
-#: above both methods on a plot about what is achievable will be read as one whatever the caption
-#: says.
-#:
-#: Cutting in pT fixes the confound at its source instead of annotating it. Within a slice the
-#: curves are monotonic and the crowding effect is unambiguous -- above 10 GeV MaskFormer runs
-#: 0.69 -> 0.98 and CLUE 0.50 -> 0.96 across the dR range -- and the statement rests on thousands of
-#: targets rather than on the ~30 isolated ones a given high-pT bin holds.
+#: The crowding figure is cut in pT, because pooled over all targets the isolation axis selects
+#: on energy beyond its peak: isolated targets are predominantly soft. Within a slice the curves
+#: are monotonic and the crowding effect is unambiguous. No reference clusterings are drawn.
 ISOLATION_ALGOS: tuple[str, ...] = ("maskformer", "clue")
 
 #: (low, high, panel key, label). The panel key goes in figure_summary.csv; the label titles the row.
@@ -366,18 +258,17 @@ def _rows(dataset, figure, panel, algo, x, y, lo=None, hi=None):
 
 
 def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
-    """Reduce one dataset's per-row tables to the binned series the five figures draw.
+    """Reduce one dataset's per-row tables to the binned series the eight figures draw.
 
-    Each block below is the aggregation that used to sit inline in the corresponding fig_*, moved
-    here unchanged so the plotted numbers cannot depend on which source a machine had.
+    Each source is optional: a dataset contributes whatever of `tables`, `anat`, `profiles` and
+    `jets` it has.
     """
     rows = []
     parts, clus = tables.get(ds, (None, None))
 
     if parts is not None:
-        # 1 eff_purity. Purity is a per-CLUSTER quantity binned by the energy of the particle its
-        # cluster was matched to, not by the cluster's own energy, so both rows share one x-axis
-        # that means one thing. See fig_eff_purity's docstring.
+        # 1 eff_purity. Purity is per-cluster but binned by the pT of the particle its cluster
+        # was matched to, so both rows share one x-axis that means one thing.
         for algo in METHODS:
             p = parts[parts.algo == algo]
             if p.empty:
@@ -401,10 +292,8 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
                 x, v, lo, hi = th.binned_bootstrap(e, r, ev, th.E_BINS, stat)
                 rows += _rows(ds, "response", panel, algo, x, v, lo, hi)
 
-        # 7 particle_class. x is the CLASS CODE rather than a continuous variable, so the binned
-        # helpers do not apply -- they take a geometric bin centre, which is undefined at code 0.
-        # The statistics are the same ones they use: Clopper-Pearson for the efficiency, which is a
-        # proportion, and an event-level bootstrap for the fragmentation, which is a mean.
+        # 6 particle_class. x is the class code, so the binned helpers do not apply: they take a
+        # geometric bin centre, which is undefined at code 0. The statistics are the ones they use.
         for algo in METHODS:
             p = parts[parts.algo == algo]
             if p.empty or "particle_class" not in p.columns:
@@ -418,10 +307,8 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
                 lo, hi = clopper_pearson(np.array([k]), np.array([n]))
                 rows += _rows(ds, "particle_class", "efficiency", algo, [code], [k / n], lo, hi)
 
-                # Fragmentation is `frag_frac`, the share of a particle's energy NOT in its largest
-                # piece. Preferred over the split-rate flag because that counts clusters holding
-                # more than a tenth of the particle and so cannot see a shower shattered into more
-                # than ten -- exactly the failure this panel exists to show.
+                # `frag_frac`, the share outside the largest piece, rather than the split-rate
+                # flag, which cannot see a shower shattered into more than ten pieces.
                 f = sel.frag_frac.to_numpy()
                 ev = sel.sample_id.to_numpy()
                 uniq = np.unique(ev)
@@ -433,12 +320,8 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
                 rows += _rows(ds, "particle_class", "fragmentation", algo, [code], [f.mean()],
                               [np.percentile(boot, 15.865)], [np.percentile(boot, 84.135)])
 
-        # 8 isolation. Efficiency against how crowded each target is, which is a property of the
-        # EVENT rather than of either method -- `dr_min` comes from generator momenta.
-        #
-        # CUT IN pT, one panel per slice. Pooling confounds crowding with energy and turns the
-        # curves non-monotonic; see ISOLATION_PT_SLICES for the full argument. The panel key is the
-        # slice rather than the quantity, since every panel plots the same quantity.
+        # 7 isolation. `dr_min` comes from generator momenta, so crowding is a property of the
+        # event. The panel key is the pT slice, since every panel plots the same quantity.
         for lo_pt, hi_pt, key, _ in ISOLATION_PT_SLICES:
             for algo in ISOLATION_ALGOS:
                 p = parts[(parts.algo == algo) & np.isfinite(parts.dr_min)
@@ -449,9 +332,8 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
                                                     DR_MIN_BINS)
                 rows += _rows(ds, "isolation", key, algo, x, y, lo, hi)
 
-        # 5 energy_budget: three scalars per method, so x is meaningless and stays NaN.
-        # `eff_e * e_dep_calib`, NOT `e_reco_calib` -- see fig_energy_budget's comment; only the
-        # energy-weighted efficiency makes the decomposition close to 1 exactly.
+        # 5 energy_budget: three scalars per method, so x stays NaN. Weighted by
+        # `eff_e * e_dep_calib`, not `e_reco_calib`, which is what makes the three fates close.
         for algo in METHODS:
             p = parts[parts.algo == algo]
             if p.empty:
@@ -466,8 +348,7 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
             for panel, v in zip(("recovered", "taken by another cluster", "never claimed"), vals, strict=True):
                 rows += _rows(ds, "energy_budget", panel, algo, [np.nan], [v])
 
-    # 2 cluster_size: a RATIO OF SUMS per bin, not a mean of per-particle counts -- the per-particle
-    # distribution is bimodal for CLUE and a mean over it reversed the sign of the trend.
+    # 2 cluster_size: a ratio of sums per bin, not a mean of per-particle counts.
     if anat is not None and not anat.empty:
         a = anat[anat.dataset == ds]
         for algo in METHODS:
@@ -477,17 +358,14 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
             x, y, lo, hi = th.binned_ratio(s.p_pt.to_numpy(), s.n_recovered.to_numpy(),
                                            s.n_true.to_numpy(), s.sample_id.to_numpy(), th.E_BINS)
             rows += _rows(ds, "cluster_size", "size", algo, x, y, lo, hi)
-            # The matched cluster's SIZE against the shower's, which unlike the recovered fraction
-            # is not bounded above by 1. That is the whole point of carrying both: a method can be
-            # wrong by building a cluster too small (fragmenting) or too large (merging), and the
-            # recovered fraction alone cannot tell those apart -- it falls in both cases.
+            # The matched cluster's size against the shower's, which unlike the recovered
+            # fraction is not bounded above by 1, so fragmenting and merging are distinguishable.
             x, y, lo, hi = th.binned_ratio(s.p_pt.to_numpy(), s.n_matched_cluster.to_numpy(),
                                            s.n_true.to_numpy(), s.sample_id.to_numpy(), th.E_BINS)
             rows += _rows(ds, "cluster_size", "size_ratio", algo, x, y, lo, hi)
 
-    # 3 shower_profile: where a target's energy went, against two shower-frame coordinates. The
-    # `_taken` panel is CUMULATIVE (recovered plus taken by another cluster), so the pair of curves
-    # closes each bin against 1 -- see profile_with_interval.
+    # 3 shower_profile. The `_taken` panel is cumulative, so the pair of curves closes each bin
+    # against 1; see profile_with_interval.
     if profiles is not None:
         for panel, edges in (("dr", an.DR_EDGES), ("depth", an.DEPTH_EDGES)):
             for algo in METHODS:
@@ -496,7 +374,7 @@ def build_summary(ds, tables, anat, profiles, jets) -> pd.DataFrame:
                     frac, lo, hi = out[name]
                     rows += _rows(ds, "shower_profile", panel + suffix, algo, c, frac, lo, hi)
 
-    # 6 jets. x is the REFERENCE jet pt throughout, so every row is binned by the same
+    # 8 jets. x is the reference jet pT throughout, so every row is binned by the same
     # method-independent quantity.
     if jets is not None and not jets.empty:
         d = jets[jets.dataset == ds]
@@ -531,10 +409,8 @@ def series(summary, ds, figure, panel, algo):
 
 
 #: The bin edges each (figure, panel) was measured over, so a series can be drawn as the top edge
-#: of a histogram rather than as a line through bin centres. Every one of these is already a module
-#: constant used by build_summary; the registry only records which figure used which, which the
-#: summary itself does not carry. Keeping it here rather than adding xlo/xhi columns means a
-#: committed figure_summary.csv from another machine redraws in the new style unchanged.
+#: of a histogram. Kept here rather than as summary columns, so a committed figure_summary.csv
+#: from another machine redraws unchanged.
 EDGES: Mapping[tuple[str, str], np.ndarray] = {
     **{("eff_purity", p): th.E_BINS for p in ("efficiency", "purity")},
     **{("cluster_size", p): th.E_BINS for p in ("size", "size_ratio")},
@@ -564,33 +440,13 @@ def _draw_series(ax, summary, ds, figure, panel, edges=None, band: bool = True, 
 # ------------------------------------------------------------------ figures
 
 def fig_eff_purity(summary, datasets, out):
-    """Efficiency and purity against particle energy.
+    """Efficiency and purity against truth particle pT.
 
-    THE TWO "CEILINGS" ARE DELIBERATELY NOT DRAWN, having been tried and removed. Neither is an
-    upper bound on both metrics, so both got crossed and the figure raised a question it could not
-    answer:
-
-      oracle_geometric assigns each cell to the NEAREST SHOWER AXIS given perfect seeds. That is
-      one specific rule and a suboptimal one, so a method that is not nearest-axis-based can beat
-      it -- CLUE does, above ~20 GeV.
-
-      oracle_resolution merges truth particles sharing more than half their energy and then
-      clusters perfectly. Its EFFICIENCY (0.989) is a real bound; its PURITY is scored against the
-      unmerged truth, so its merged clusters are impure by construction and both methods beat it
-      at low energy.
-
-    Calling either a ceiling claims more than it supports. The useful content is one number --
-    oracle_resolution reaches 0.989 efficiency, so the cells carry the information and the failure
-    is algorithmic rather than intrinsic -- and that belongs in the text, not as a flat line at
-    0.99 compressing the y-axis.
+    No reference clusterings are drawn: neither bounds both metrics, so a line for either would be
+    crossed and read as a ceiling anyway. The resolution reference is quoted in the report instead.
     """
     fig, axes = th.grid(2, len(datasets), datasets)
     for j, ds in enumerate(datasets):
-        # Purity is a per-CLUSTER quantity, but build_summary bins it by the energy of the particle
-        # that cluster was matched to, not by the cluster's own energy. Both rows then share one
-        # x-axis that means one thing. Binning the rows by different energies under a single
-        # "particle energy" label is exactly the ambiguity these figures exist to remove -- and it
-        # silently made the two rows non-comparable.
         _draw_series(axes[0][j], summary, ds, "eff_purity", "efficiency")
         _draw_series(axes[1][j], summary, ds, "eff_purity", "purity")
         axes[1][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
@@ -598,11 +454,8 @@ def fig_eff_purity(summary, datasets, out):
             ax.set_xscale("log")
             ax.set_ylim(0, 1.02)
     axes[0][0].set_ylabel("efficiency")
-    # "matched-cluster", not just "purity". The efficiency row is a rate over ALL targets, with an
-    # unmatched one entering as a zero; the purity row is a rate over the clusters that MATCHED,
-    # so a fake cluster is not in it at all. That asymmetry is the whole of the conditioning
-    # argument in the discussion, and an axis reading "purity" invites it to be read as the
-    # unconditional number, which is 0.29 lower for CLUE.
+    # "matched-cluster", not "purity": the efficiency row is a rate over all targets while this
+    # one is conditioned on a match, so no fake cluster appears in it.
     axes[1][0].set_ylabel("matched-cluster purity")
     return th.finish(fig, out)
 
@@ -610,25 +463,15 @@ def fig_eff_purity(summary, datasets, out):
 def fig_cluster_size(summary, datasets, out):
     """How each method gets the cluster wrong: too small, or too large.
 
-    TWO ROWS, AND THE TOP ONE IS THE POINT. The lower row is the fraction of a shower's cells the
-    matched cluster actually holds, which is bounded above by 1 and therefore falls whether a
-    method fragments a shower or drowns it in a neighbour's cells. It cannot distinguish the two.
-
-    The upper row is the matched cluster's SIZE against the shower's, which is not bounded. Unity
-    means the cluster has the right number of cells; below is fragmentation, above is merging. The
-    two rows read together give the composition: a method at size 1.9 holding 0.81 of the shower
-    has a cluster of which the target is only 43%, and the rest belongs to somebody else.
-
-    Both rows are RATIOS OF SUMS -- all cells in a bin over all truth cells in it -- rather than
-    means of per-particle ratios. The per-particle distribution is bimodal for CLUE, which usually
-    fragments a large shower and occasionally captures most of one, and a mean over those two
-    behaviours describes neither; it reversed the sign of the trend. Summing first asks a question
-    the shape of the distribution cannot distort.
+    The upper row is the matched cluster's size over the shower's, which is unbounded. Unity is
+    right, below it is fragmentation and above it is merging. The lower row is the fraction of the
+    shower's cells the cluster holds, which is bounded by 1 and falls under either failure. Read
+    together they give the composition. Both are ratios of sums.
     """
     fig, axes = th.grid(2, len(datasets), datasets, sharey="row")
     for j, ds in enumerate(datasets):
         _draw_series(axes[0][j], summary, ds, "cluster_size", "size_ratio")
-        # Unity is the reference the top row exists to be read against, so it is drawn.
+        # Unity is what the top row is read against.
         axes[0][j].axhline(1.0, color="k", lw=0.5, ls=":")
         _draw_series(axes[1][j], summary, ds, "cluster_size", "size")
         axes[1][j].set_ylim(0, 1.0)
@@ -643,31 +486,15 @@ def fig_cluster_size(summary, datasets, out):
 def fig_shower_profile(summary, datasets, out):
     """Where in a shower the energy goes: transverse first, then longitudinal.
 
-    THREE FATES PER BIN, NOT ONE. The earlier version drew the recovered fraction alone, which left
-    the rest of every bin unexplained: a reader could see that a method held half a bin's energy
-    and could not see whether the other half went to a neighbouring cluster or into no cluster at
-    all. That distinction is the whole of the failure-mode argument, and figure 5 already makes it
-    for the event as a whole, so this figure makes it again resolved in the shower frame.
+    Two curves per method: recovered, and cumulatively recovered plus taken by another cluster, so
+    each panel partitions into the same three fates the energy-budget figure shows for the event
+    as a whole. Only the recovered curve carries a band.
 
-    The second curve per method is CUMULATIVE -- recovered plus taken by another cluster -- so each
-    panel partitions the same way figure 5's stacked bar does: below the lower curve is recovered,
-    between the two is taken by another cluster, and above the upper curve is energy no cluster
-    claimed. Six independent curves would not close visibly; two curves per method do. Only the
-    recovered curve carries a band, because it is the one the discussion quotes and two bands per
-    method is more shading than these panels can hold.
+    Colour and dash say which method and weight says which curve, so the key is in two parts: the
+    methods, then two split-colour entries naming the curves for both at once.
 
-    THE KEY IS IN TWO PARTS, and it has to be, because the panel uses two channels at once: COLOUR
-    AND DASH say which method, WEIGHT says which of its two curves. The first version left the
-    faint curve out of the legend entirely, on the reasoning that an entry per method per curve
-    would double the key -- but that left the reader to infer the whole cumulative construction
-    from the drawing, and a figure whose central quantity is only explained in the caption is not
-    doing its job. Two neutral-grey entries name the two curves once, for both methods, so the key
-    grows by two rows rather than by four and nothing on the page is unlabelled.
-
-    THE AXES ARE NOT UNIFORM IN ENERGY, and the caption says so, because the figure invites the
-    opposite reading. Most of a shower's energy sits in the first two or three dR bins and near the
-    shower maximum in depth, so a shortfall in an outer bin costs a small fraction of the energy of
-    the same shortfall near the core. The panels are shape, not budget; figure 5 is the budget.
+    The axes are not uniform in energy, most of a shower sitting in the first few dR bins, so
+    these panels show shape rather than budget.
     """
     # sharex=False: the rows are different coordinates, not the same one at two scales.
     fig, axes = th.grid(2, len(datasets), datasets, sharex=False)
@@ -677,31 +504,24 @@ def fig_shower_profile(summary, datasets, out):
              ("depth", "layers past shower start")]
         ):
             ax = axes[row][j]
-            # The recovered curve is the one the discussion quotes, so it is the heavier of the
-            # two and carries the band; the cumulative curve is a second reading of the same
-            # series rather than a third method, so it keeps the method's colour and dash and is
-            # separated by weight alone. Both are named in the key built below.
+            # The cumulative curve is a second reading of the same series rather than a third
+            # method, so it keeps the method's colour and dash and is separated by weight alone.
             _draw_series(ax, summary, ds, "shower_profile", coord, linewidth=1.3)
             _draw_series(ax, summary, ds, "shower_profile", coord + "_taken", band=False,
                          linewidth=0.6, alpha=0.55, label="_nolegend_")
-            # NO LINE AT UNITY. The fraction cannot exceed 1, so the top of the panel already is
-            # unity and a dotted rule across all four panels only added ink; the axis is left just
-            # above it so the upper curve does not run into the spine.
+            # No line at unity: the fraction cannot exceed 1, so the top of the panel is already
+            # unity. The limit sits just above so the upper curve clears the spine.
             ax.set_ylim(0, 1.04)
             ax.set_xlabel(xlabel)
     axes[0][0].set_ylabel("fraction of the\nshower's energy")
     axes[1][0].set_ylabel("fraction of the\nshower's energy")
 
-    # THE SECOND HALF OF THE KEY. These two entries describe a WEIGHT that both methods use, so
-    # each is drawn as a key split down its middle: MaskFormer's blue solid on the left half and
-    # CLUE's green dash on the right, at the weight being named. That replaces a neutral grey line
-    # which was in a colour appearing nowhere in the panels and left the reader to infer that it
-    # stood for both methods at once. Appended after the series so the methods stay first, and with
-    # ncol=2 matplotlib fills column-wise -- methods in the left column, curves in the right.
+    # These entries describe a weight both methods use, so each is a key split down its middle.
+    # Appended after the series so the methods stay first in the legend.
     extra = [(th.SplitKey(METHODS, linewidth=lw), text)
              for lw, text in ((1.3, "recovered"), (0.6, "recovered + taken by another cluster"))]
-    # The swatches are widened because each now carries two segments: at the default length CLUE's
-    # half would be too short to show its dash pattern as a dash.
+    # Widened because each swatch carries two segments; at the default, half is too short to
+    # show a dash pattern.
     return th.finish(fig, out, ncol=len(METHODS), extra=extra, handlelength=3.0)
 
 
@@ -714,26 +534,9 @@ def fig_response(summary, datasets, out):
         axes[0][j].axhline(1.0, color="k", lw=0.5, ls=":")
         axes[0][j].set_ylim(0.4, 2.0)
         axes[1][j].set_yscale("log")
-        # TICKS MUST BRACKET THE DATA. These were [0.5, 1, 2, 5], and every MaskFormer point lies
-        # between 0.142 and 0.322 -- the entire learned-method curve sat below the lowest label, on
-        # a log axis with minor ticks off, so no value on it could be read. An axis whose labels do
-        # not span the series it carries is worse than no axis.
-        #
-        # THEY MUST ALSO LOOK LOGARITHMIC, and the way to do that is UNLABELLED MINOR TICKS rather
-        # than more labels. Two previous attempts labelled every tick -- [0.1, 0.2, 0.5, 1, 2],
-        # then [0.15, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5] -- and both read as a linear axis someone had
-        # written arbitrary numbers on, because a label at every tick destroys the one visual cue
-        # that says "log": the minor ticks crowding together as each decade closes, 0.2 to 0.3 wide
-        # and 0.8 to 0.9 narrow. `minorticks_off()` had removed exactly that cue.
-        #
-        # So: round numbers on the labelled ticks, and the standard 2..9-per-decade minors between
-        # them carrying no text. 0 cannot be one of the labels -- it does not exist on a log axis --
-        # and 0.2 is kept alongside 0.5/1.0/1.5 because the whole pileup-0 MaskFormer curve lives
-        # between 0.14 and 0.32, and an axis whose labels do not reach its data is the failure the
-        # paragraph above is about.
-        #
-        # The range is tightened to what the two datasets actually occupy (0.139 to 1.252 including
-        # bands) so the curves fill the panel rather than sitting in the middle third of it.
+        # Labelled ticks must bracket the data, and unlabelled 2..9-per-decade minors between
+        # them are what makes the axis read as logarithmic; a label at every tick removes that
+        # cue. The limits are tightened to the range the two datasets occupy.
         axes[1][j].set_ylim(0.13, 1.6)
         axes[1][j].yaxis.set_major_locator(mticker.FixedLocator([0.2, 0.5, 1.0, 1.5]))
         axes[1][j].yaxis.set_major_formatter(mticker.FixedFormatter(["0.2", "0.5", "1.0", "1.5"]))
@@ -743,44 +546,32 @@ def fig_response(summary, datasets, out):
         axes[1][j].set_xlabel(r"truth particle $p_{\rm T}$ [GeV]")
         for ax in (axes[0][j], axes[1][j]):
             ax.set_xscale("log")
-    # E_dep, NOT E_true. The denominator is the energy the target actually DEPOSITED in the
-    # cells being clustered, which is what src.evaluation.metrics divides by. A particle's true
-    # energy is a different and larger quantity -- it includes what leaked, what fell below zero
-    # suppression, and for a muon nearly all of it -- so labelling this axis E_true would claim a
-    # calorimeter energy scale the figure does not measure.
+    # E_dep, not E_true: the denominator is the energy the target deposited in the cells being
+    # clustered, which is smaller and is what src.evaluation.metrics divides by.
     axes[0][0].set_ylabel("median $E_{\\rm reco}/E_{\\rm dep}$")
     axes[1][0].set_ylabel("$\\sigma_E/E$")
     return th.finish(fig, out)
 
 
 def fig_energy_budget(summary, datasets, out):
-    """The three fates of a particle's energy: one full bar per method, darkest to lightest.
+    """The three fates of a target's energy: one stacked bar per method, darkest to lightest.
 
-    HORIZONTAL AND STACKED, not grouped. A stacked bar is one continuous 0-to-1 line per method,
-    so "how is this method's energy divided" is read in a single sweep and the methods sit
-    directly above one another for comparison. The grouped version made the within-fate
-    comparison easy and the within-method one hard, which is the wrong way round: the point of
-    this figure is that the two methods lose the SAME total in DIFFERENT ways.
-
-    Colour carries the method and lightness carries the fate, so the figure needs no second
-    colour language -- the blue bar is MaskFormer everywhere it appears, and the palest segment is
-    always the energy nobody claimed.
+    Stacked rather than grouped, so how a method divides its energy reads in one sweep. The point
+    is that the two methods lose the same total in different ways. Colour carries the method and
+    lightness the fate.
     """
-    fig, ax = plt.subplots(figsize=th.figsize_for(1, 1))
+    fig, ax = plt.subplots(figsize=th.figsize_for(1))
     fates = ["recovered", "taken by another cluster", "never claimed"]
     alphas = (1.0, 0.55, 0.25)
     labels, rows = [], []
     for ds in datasets:
         for algo in METHODS:
-            vals = [float(series(summary, ds, "energy_budget", f, algo)[1][0])
-                    if len(series(summary, ds, "energy_budget", f, algo)[1]) else None
-                    for f in fates]
+            found = [series(summary, ds, "energy_budget", f, algo)[1] for f in fates]
+            vals = [float(v[0]) if len(v) else None for v in found]
             if any(v is None for v in vals):
                 continue
-            # The decomposition is built to close exactly -- see build_summary, which weights by
-            # eff_e * e_dep_calib rather than e_reco_calib. Re-checked here because a summary can
-            # arrive from another machine, and a budget that does not sum to 1 is the one error in
-            # this figure that looks entirely plausible on the page.
+            # Re-checked here because a summary can arrive from another machine, and a budget
+            # that does not sum to 1 would look entirely plausible on the page.
             assert abs(sum(vals) - 1.0) < 1e-6, f"fates for {algo} sum to {sum(vals):.4f}, not 1"
             prefix = f"{th.DATASET_LABELS[ds]}\n" if len(datasets) > 1 else ""
             labels.append(prefix + th.LABELS[algo])
@@ -802,12 +593,8 @@ def fig_energy_budget(summary, datasets, out):
     ax.set_xlabel("fraction of the target's deposited energy")
     ax.invert_yaxis()
 
-    # LIGHTNESS IS THE VARIABLE HERE, and it means the same thing on both methods' bars, so each
-    # key is split down its middle: MaskFormer's blue on the left half, CLUE's green on the right,
-    # both at the fate's alpha. Drawing them in one method's colour would imply the key belonged to
-    # that method; the neutral grey they were drawn in before avoided that but put a colour in the
-    # key that appears nowhere in the bars, leaving the reader to decode it. A swatch made of the
-    # two colours it describes needs no decoding.
+    # Lightness means the same thing on both methods' bars, so each key is split down its middle
+    # rather than drawn in one method's colour.
     handles = [th.SplitKey(METHODS, patch=True, alpha=a) for a in alphas]
     fig.legend(handles, fates, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False,
                handler_map=th.HANDLER_MAP, handlelength=2.4)
@@ -819,26 +606,11 @@ def fig_energy_budget(summary, datasets, out):
 
 
 def fig_particle_class(summary, datasets, out):
-    """What each method is good at, by particle type. Grouped bars, not curves.
+    """Efficiency and fragmentation by particle type.
 
-    THE FRAGMENTATION PANEL IS THE POINT, and the ordering in it inverts between the two halves of
-    the table. CLUE fragments electromagnetic showers far LESS than MaskFormer and hadronic showers
-    far MORE. That is a statement about the algorithms rather than about tuning: a density threshold
-    is well matched to a compact single-peaked EM shower and shatters a multi-peaked hadronic one,
-    while a learned model encodes no shower shape and is therefore flatter across every class.
-
-    THE EFFICIENCY PANEL CARRIES A SECOND RESULT that the earlier grouping could not show. Split
-    charged from neutral and the two methods disagree about which hadron is harder: MaskFormer
-    falls from 0.709 to 0.650 going charged -> neutral, CLUE RISES from 0.504 to 0.551. Neutral
-    hadrons are the group a particle-flow chain most needs from the calorimeter, having no track,
-    so this is the bar with the most downstream weight and the one where the gap is narrowest.
-
-    Read the efficiency panel for the level and the fragmentation panel for the failure mode; the
-    pairing is what separates "misses the particle" from "finds it in pieces". See PARTICLE_GROUPS
-    for why photon/electron is pooled and muons are not drawn.
-
-    Bars rather than a line: the x axis is categorical, and joining categories with a line would
-    imply an ordering between an EM shower and a hadron that does not exist.
+    Read the efficiency panel for the level and the fragmentation panel for the failure mode: the
+    pairing separates "misses the particle" from "finds it in pieces". Bars rather than a line,
+    the x axis being categorical. See PARTICLE_GROUPS for what is pooled and what is not drawn.
     """
     fig, axes = th.grid(2, len(datasets), datasets, sharey="row", sharex=False)
     codes = list(range(len(PARTICLE_GROUPS)))
@@ -862,15 +634,9 @@ def fig_particle_class(summary, datasets, out):
                 axes[row][j].errorbar(pos + offset, yv, yerr=np.abs(err), fmt="none",
                                       ecolor="#333333", elinewidth=0.8, capsize=2)
             axes[row][j].set_xticks(pos, [GROUP_LABELS[c] for c in present])
-    # ONE LIMIT PER ROW, SET AFTER EVERY BAR IS DRAWN. `sharey="row"` means the first set_ylim
-    # freezes the whole row, so setting it inside the dataset loop pinned both columns to the
-    # autoscale of whichever was drawn FIRST. The fragmentation row inherited pu0's 0.41 and cut
-    # three pu200 bars off at the top, error bars and all -- CLUE on charged hadrons (0.444) and
-    # MaskFormer on neutral (0.431) simply ran off the panel with nothing to say they had.
-    #
-    # 0-1 for both rows rather than a data-driven limit: efficiency and fragmentation are both
-    # fractions of one particle's energy, so the full range is meaningful for each, it cannot clip
-    # whatever a future dataset does, and it makes the two rows read on the same scale.
+    # One limit per row, set after every bar is drawn: under `sharey="row"` the first set_ylim
+    # freezes the row, so setting it inside the dataset loop would pin both columns to whichever
+    # was drawn first. 0-1 rather than a data-driven limit, since both rows are fractions.
     for row in range(2):
         axes[row][0].set_ylim(0, 1.0)
     axes[0][0].set_ylabel("efficiency")
@@ -879,34 +645,14 @@ def fig_particle_class(summary, datasets, out):
 
 
 def fig_isolation(summary, datasets, out):
-    """Efficiency against how crowded each target is, at fixed pT. Crowding is the limitation.
+    """Efficiency against how crowded each target is, one row per pT slice.
 
-    ONE ROW PER pT SLICE, and the slicing is the argument rather than a refinement of it. Pooled
-    over pT these curves peak near dR 0.07 and fall away, which reads as "isolation stops helping"
-    and is not true: beyond the peak the isolation axis is selecting soft targets rather than
-    uncrowded ones. Cut in pT the confound is gone and both methods rise monotonically in the two
-    harder slices, MaskFormer 0.69 -> 0.98 and CLUE 0.50 -> 0.96 above 10 GeV.
-
-    That is the evidence for the study's main claim about where the loss comes from: the flat
-    efficiency-against-pT curve in figure 1 is not a model that fails to improve with energy, it is
-    reconstruction getting easier while the environment gets harder, very nearly cancelling.
-
-    WHAT THE SOFT SLICE SAYS, and it is a limit on the claim rather than support for it: at
-    0.5-2 GeV efficiency does NOT rise with separation, it peaks around dR 0.05 and falls. A soft
-    isolated particle is still hard, for reasons that are not crowding -- few cells, and a shower
-    that a threshold can lose entirely. Crowding dominates above ~2 GeV and does not explain the
-    softest bin, which is where most targets are.
-
-    No reference clusterings: see ISOLATION_PT_SLICES for why they were removed.
+    The slicing is the argument: pooled over pT the isolation axis selects soft targets rather
+    than uncrowded ones beyond its peak. No reference clusterings are drawn.
     """
-    # sharex=True, NOT "col". Every panel measures the same coordinate, and the dR RANGE each
-    # dataset covers is itself a result: at pileup 200 no target above 10 GeV has a neighbour
-    # beyond dR = 0.2 and only 14 beyond 0.1, so the binned series simply stops. Under a per-column
-    # axis those panels rescaled to fill the width, and CLUE's rise to 0.85 read as "large
-    # separation" when the axis ended at 0.07 -- the same horizontal position meant a different dR
-    # in each column, in a figure whose entire grammar is comparison across columns. Sharing the
-    # axis puts the truncation on the page, which is the honest version and the more informative
-    # one: the empty right-hand side of the pileup-200 panels is the crowding result.
+    # sharex=True, not "col": the dR range each dataset covers is itself a result, and a
+    # per-column axis would rescale the truncated pileup-200 panels to fill the width, making the
+    # same horizontal position mean a different dR in each column.
     fig, axes = th.grid(len(ISOLATION_PT_SLICES), len(datasets), datasets, sharey=True, sharex=True)
     for j, ds in enumerate(datasets):
         for row, (_, _, key, label) in enumerate(ISOLATION_PT_SLICES):
@@ -921,8 +667,7 @@ def fig_isolation(summary, datasets, out):
                 th.draw_steps(ax, algo, elo, ehi, y)
             ax.set_xscale("log")
             ax.set_ylim(0, 1.05)
-            # The slice is named inside the panel rather than as a title: the top of each column
-            # already carries the dataset name, and a second title row would compete with it.
+            # Named inside the panel: the column already carries the dataset name as its title.
             ax.text(0.03, 0.93, label, transform=ax.transAxes, va="top", ha="left", fontsize="small")
         axes[-1][j].set_xlabel(r"$\Delta R$ to nearest other target")
     for row in range(len(ISOLATION_PT_SLICES)):
@@ -931,16 +676,11 @@ def fig_isolation(summary, datasets, out):
 
 
 def fig_jets(summary, datasets, out):
-    """Do the per-cluster errors survive into jets? Find it, measure it, measure it precisely.
+    """Do the per-cluster errors survive into jets?
 
-    Three rows, because a jet can fail in three separable ways and an analysis cares about all of
-    them: the jet can be missing entirely, its energy scale can be wrong, or its energy can be
-    imprecise. The rows mirror the cluster-level response figure, so the question "does the
-    cluster-level bias-variance split carry through to an observable" is answered by reading the
-    two figures against each other.
-
-    x is the REFERENCE jet pt throughout -- the jet a perfect clusterer would have made from these
-    cells -- so every row is binned by the same, method-independent quantity.
+    Three rows, for the three separable ways a jet can fail: missing entirely, wrong energy scale,
+    imprecise energy. They mirror the cluster-level response figure, so the two can be read
+    against each other. x is the reference jet pT throughout.
     """
     fig, axes = th.grid(3, len(datasets), datasets, sharey="row")
     xmax = 0.0
@@ -950,14 +690,12 @@ def fig_jets(summary, datasets, out):
         for algo in METHODS:
             x, *_ = series(summary, ds, "jets", "efficiency", algo)
             if len(x):
-                # The UPPER EDGE of the last populated bin, not its centre. The series is a step
-                # spanning the whole bin now, so an axis stopping at the centre cuts the last bin
-                # in half and the figure loses its highest-pT measurement without saying so.
+                # The upper edge of the last populated bin, not its centre: the series is a step
+                # spanning the whole bin, and stopping at the centre would clip it.
                 xmax = max(xmax, float(th.bin_edges_for(x, th.JET_PT_BINS)[1].max()))
         axes[0][j].set_ylim(0, 1.02)
-        # No hardcoded ylim on the response row: an earlier version capped it at 1.3 and silently
-        # clipped CLUE's entire line off the top. An axis limit that can hide a series is worse
-        # than an untidy one.
+        # No hardcoded ylim on the response row: a limit that can hide a series is worse than an
+        # untidy axis.
         axes[1][j].axhline(1.0, color="k", lw=0.5, ls=":")
         ticks = [t for t in (25, 35, 50, 75, 100, 150, 200, 300, 400) if t <= xmax]
         for row in range(3):
@@ -979,22 +717,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--datasets", nargs="+", default=list(th.DATASETS))
     ap.add_argument("--events", type=int, default=None,
-                    help="events for the store-derived figures. Defaults to this dataset's "
-                         "windows.eval_events -- the full evaluation window, and what the "
-                         "committed summaries were built over.")
+                    help="events for the store-derived figures; defaults to this dataset's "
+                         "windows.eval_events, which the committed summaries were built over")
     ap.add_argument("--rebuild-anatomy", action="store_true")
     ap.add_argument("--rebuild-jets", action="store_true")
     ap.add_argument("--from-summary", action="store_true",
                     help="draw every column from results/<ds>/figure_summary.csv and read nothing "
-                         "else -- no event store, no per-row tables. Use this to redraw the figures "
-                         "on a machine where the analysis was not run.")
+                         "else; use this on a machine where the analysis was not run")
     ap.add_argument("--latex", action="store_true",
                     help="render text with a real LaTeX installation (requires one to be present)")
     args = ap.parse_args()
 
-    import matplotlib.pyplot as _plt
-
-    globals()["plt"] = _plt
     th.apply(latex=True if args.latex else None)
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -1003,39 +736,28 @@ def main() -> None:
     for ds in args.datasets:
         res = Path("results") / ds
         if not res.is_dir():
-            print(f"  ! {ds}: no results/{ds}/ -- skipping this column", flush=True)
+            print(f"  ! {ds}: no results/{ds}/, skipping this column", flush=True)
             continue
         summary_file = res / SUMMARY_NAME
 
-        # THE EVENT COUNT DEFAULTS TO THE CONFIGURED EVAL WINDOW, and is not a constant. It was a
-        # hardcoded 120 while both datasets set windows.eval_events: 500, so a plain
-        # --rebuild-anatomy quietly recomputed the store-derived rows on a quarter of the
-        # statistics and wrote them over a summary built on the full window -- cluster_size lost
-        # its 100 GeV bin and moved by up to 0.09, with nothing on the page to say why. Deriving
-        # the default from the window the store was dumped over means the two cannot drift apart
-        # again; --events still overrides it for a deliberately quick look.
+        # Derived from the window the store was dumped over, so a rebuild cannot quietly write
+        # rows computed on fewer events over a summary built on the full window.
         n_events = args.events if args.events is not None else \
             settings()["dataset"][ds]["windows"]["eval_events"]
 
-        # EACH SOURCE IS OPTIONAL AND THEY ARE GATHERED INDEPENDENTLY. The previous version bailed
-        # out of the whole dataset the moment particles_*.parquet was missing, which silently threw
-        # away a jets.parquet that IS tracked and had travelled through git perfectly well -- the
-        # pu200 column of figure 6 vanished with the data sitting right there on disk. A dataset now
-        # contributes whatever it has.
+        # Each source is optional and they are gathered independently, so a dataset contributes
+        # whatever it has rather than being dropped for one missing table.
         tables, anat, profiles, jets = {}, None, None, None
 
-        # --from-summary is a hard short-circuit, not a hint. It draws the column from the committed
-        # figure_summary.csv and reads nothing else -- not the store, and not the per-row tables
-        # either. Both halves matter: skipping only the store would let a machine holding partial
-        # tables rebuild a summary missing the jets, anatomy and profile rows, and write that over
-        # the complete committed one. This is the mode for drawing the figures somewhere the
-        # analysis was not run.
+        # A hard short-circuit: neither the store nor the per-row tables are read. Skipping only
+        # the store would let a machine with partial tables write an incomplete summary over the
+        # committed one.
         if args.from_summary:
             if summary_file.exists():
                 print(f"  {ds}: drawing from the committed {summary_file.name}", flush=True)
                 summaries.append(pd.read_csv(summary_file))
             else:
-                print(f"  ! {ds}: no {SUMMARY_NAME} -- skipping this column", flush=True)
+                print(f"  ! {ds}: no {SUMMARY_NAME}, skipping this column", flush=True)
             continue
 
         parts = sorted(res.glob("particles_*.parquet"))
@@ -1046,11 +768,9 @@ def main() -> None:
                           ignore_index=True),
             )
 
-        # THE STORE IS ONLY TOUCHED FOR THE ACTIVE DATASET. Jets, the shower anatomy and the shower
-        # profiles are the three quantities that cannot be recovered from the per-row tables and
-        # have to be recomputed from the event store, which lives on the compute cluster.
-        # `load_profiles` in particular runs on every invocation for the active dataset, with no
-        # cache to fall back on, so a machine without the store must use --from-summary above.
+        # The store is touched only for the active dataset. Jets, the shower anatomy and the
+        # profiles cannot be recovered from the per-row tables; `load_profiles` has no cache, so a
+        # machine without the store must use --from-summary.
         jcache = res / "jets.parquet"
         if ds == active and (args.rebuild_jets or not jcache.exists()):
             print(f"  building jet cache for {ds} ({n_events} events) ...", flush=True)
@@ -1067,10 +787,8 @@ def main() -> None:
         if cache.exists():
             anat = pd.read_parquet(cache)
 
-        # REBUILD FROM THE PER-ROW TABLES WHEN THIS MACHINE HAS THEM, otherwise fall back to the
-        # committed summary. The rebuild wins deliberately: local tables are the fresher artefact,
-        # and a stale committed summary silently plotting over a rescore is exactly the failure
-        # this repository keeps designing out.
+        # Rebuild from the per-row tables when this machine has them; local tables are the
+        # fresher artefact, and a stale summary plotting over a rescore is the failure to avoid.
         built = build_summary(ds, tables, anat, profiles, jets)
         if not built.empty:
             built.to_csv(summary_file, index=False, float_format="%.6g")
@@ -1080,7 +798,7 @@ def main() -> None:
             print(f"  {ds}: no local tables; drawing from the committed {summary_file.name}", flush=True)
             summaries.append(pd.read_csv(summary_file))
         else:
-            print(f"  ! {ds}: no tables and no {SUMMARY_NAME} -- skipping this column "
+            print(f"  ! {ds}: no tables and no {SUMMARY_NAME}, skipping this column "
                   f"(dump its store and run scripts.score, or copy the summary across)", flush=True)
 
     if not summaries:
@@ -1088,7 +806,7 @@ def main() -> None:
     summary = pd.concat(summaries, ignore_index=True)
 
     def drawn(figure: str) -> list[str]:
-        """The datasets that actually carry rows for one figure, in the requested order."""
+        """The datasets carrying rows for one figure, in the requested order."""
         have = set(summary[summary.figure == figure].dataset)
         return [d for d in args.datasets if d in have]
 

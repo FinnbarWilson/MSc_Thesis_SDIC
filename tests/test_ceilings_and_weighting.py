@@ -1,18 +1,9 @@
-"""Checks on the reference clusterings, the match floor and the split/merge weighting.
+"""The resolution reference, the match floor and the split/merge weighting.
 
-Three changes are covered here, each of which alters a published number, so each gets a test
-that would fail if the change were silently reverted.
-
-*   The match floor. With no floor, a pair sharing one negligible cell is a match, which made
-    the fake rate nearly vacuous. The floor is relative and symmetric, and the tests pin both
-    halves of that: a small cluster inside a big particle survives, a big cluster grazing a
-    small particle does not.
-*   The split/merge weighting. Hit-counted and energy-weighted definitions must be able to
-    disagree, and the test constructs the case where they do -- a cluster taking many cells
-    but almost no energy -- rather than asserting on real data where the difference could
-    come from anywhere.
-*   The resolution reference. It has to behave like a ceiling, so the properties asserted are
-    structural: efficiency near 1, and a purity below 1.
+Each of the three alters a published number, so each gets a test that would fail if it were
+silently reverted: the match floor is relative and symmetric, the hit-counted and
+energy-weighted split/merge definitions must be able to disagree, and the resolution reference
+must behave like a ceiling, with efficiency near 1 and purity below it.
 """
 
 
@@ -25,8 +16,6 @@ from src.evaluation.metrics import score_event
 from src.evaluation.oracle import particle_geometry, resolution_labels, unresolvable_groups
 from tests.conftest import open_smoke_store
 
-# The store path, the skip and the caching all live in tests/conftest.py, so that
-# SMOKE_STORE=... points every module at the same one -- including a pu200 store.
 _store = open_smoke_store
 
 
@@ -71,9 +60,9 @@ def test_relative_floor_requires_both_totals():
 def test_hit_and_energy_weighting_disagree_on_a_tail_graze():
     """The case the change exists for: many cells, almost no energy.
 
-    Particle 0 has 100 cells. Cluster 1 takes 20 of them -- comfortably over the 10% hit
-    threshold -- but they are tail cells holding 1% of its energy. By hits that is a split
-    and a merge; by energy it is neither, and by energy is the honest reading.
+    Particle 0 has 100 cells. Cluster 1 takes 20 of them, comfortably over the 10% hit
+    threshold, but they are tail cells holding 1% of its energy. By hits that is a split
+    and a merge; by energy it is neither, and energy is the weighting reported.
     """
     overlap_n = np.array([[80.0, 20.0]])
     total_n = np.array([100.0])
@@ -161,7 +150,7 @@ def test_resolution_labels_assign_every_cell():
 
 
 def test_event_clustered_interval_is_wider_than_the_binomial():
-    """The whole point of the change: correlated particles do not give binomial errors.
+    """Correlated particles do not give binomial errors.
 
     Every particle in an event is given the same outcome here, which is the extreme of the
     correlation that really exists. The binomial interval sees 400 independent trials and

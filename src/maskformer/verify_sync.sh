@@ -1,19 +1,17 @@
 #!/bin/bash
 # Check that the copies in hepattn_colliderml/ still match the hepattn working tree they came from.
 #
-# Those files are duplicated rather than imported, which buys the dependency boundary described
-# in README.md but costs the usual price of a copy: it can drift. During development the
-# authoritative version is the one in hepattn, since that is where the code actually runs, so
-# this script exists to make drift visible instead of discovering it at submission.
-#
 #   ./verify_sync.sh                      # against the default checkout
 #   HEPATTN=/path/to/hepattn ./verify_sync.sh
 #
-# Exit status is 0 when everything matches, 1 otherwise, so it can go in a pre-submission check.
+# Those files are duplicated rather than imported, which buys the dependency boundary README.md
+# describes at the usual price of a copy: it can drift. The authoritative version is the one in
+# the hepattn checkout, since that is where the code runs. Exit status is 0 when everything
+# matches, so this can go in a pre-submission check.
 #
-# The mirrored files live one directory down, in hepattn_colliderml/, and nothing else does.
-# That is the whole reason for the extra level: `ls` answers "which of these files must stay
-# byte-identical to upstream" without anyone having to remember the list below.
+# The mirrored files live one directory down and nothing else does, which is the reason for the
+# extra level: `ls hepattn_colliderml/` answers "which files must stay byte-identical to
+# upstream" without anyone having to remember the list below.
 
 set -uo pipefail
 

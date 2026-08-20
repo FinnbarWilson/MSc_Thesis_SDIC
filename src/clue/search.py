@@ -1,33 +1,14 @@
 """CLUE's parameter search space and Optuna objective, driven by `scripts.tune_clue`.
 
-The objective is scored against the same code that reports the result.
+The objective calls :func:`~src.evaluation.metrics.score_event`, the same function that
+produces the reported tables, so there is no second and cheaper definition of "good" here.
 
-Tuning toward one quantity and reporting another leaves the reported number optimised for
-nothing, so the objective here calls :func:`~src.evaluation.metrics.score_event` -- literally
-the same function that produces the thesis tables, through the same Hungarian matcher. There
-is no second, cheaper definition of "good" anywhere in this file.
-
-Tuning runs on its own event window, disjoint from the one that is reported. CLUE needs no
-training, so it could in principle be tuned anywhere; tuning it on the evaluation events
-would nonetheless hand it an advantage the MaskFormer does not have, since the model's own
-working point was chosen on a separate window. :func:`src.config._validate` enforces the
-disjointness rather than trusting it.
-
-Each subsystem is tuned independently. Their cell energies and geometries differ by an order
-of magnitude -- ECAL layers sit 5.05 mm apart and HCAL layers 51 mm -- so a single density
-radius cannot mean the same thing in both.
-
-WHAT SHOWER-LEVEL TRUTH DID TO THAT DECOMPOSITION, and why it still holds. A collapsed target
-is a whole shower, and 42.2% of them span a subsystem boundary, so a per-subsystem trial now
-routinely sees only PART of a target -- `_RestrictedTruth` masks the rest away and the
-`n_hits > 0` filter below drops targets absent from this subsystem entirely. That is the right
-sub-problem rather than a defect: it asks "given only these cells, how well can CLUE recover
-the part of each shower that lives here?", which is exactly what a per-subsystem density radius
-should be chosen on. Stitching the parts back together is a different question with its own
-single parameter, `clue.link_radius`, and it CANNOT be tuned in this loop because it is
-cross-subsystem by definition. It gets its own scan over the same tuning window --
-`scripts.scan_link_radius`, whose result is `results/<ds>/link_radius_scan.parquet`. See
-:func:`src.clue.pipeline.link_across_subsystems`.
+Tuning runs on a window disjoint from the reported one, which :func:`src.config._validate`
+enforces. Each subsystem is tuned independently, because ECAL and HCAL cell geometries differ
+by an order of magnitude and one density radius cannot mean the same thing in both. Stitching
+the per-subsystem parts back together is a separate question with its own parameter,
+``clue.link_radius``, which cannot be tuned in this loop and is scanned by
+`scripts.scan_link_radius`.
 """
 
 from collections.abc import Mapping, Sequence
@@ -46,9 +27,8 @@ SEARCH_PARAMETERS = ("d_c_2d", "rho_c_2d", "d_c_3d", "rho_c_3d", "depth_scale")
 class _RestrictedTruth:
     """An EventRecord view whose truth partition is masked to one subsystem.
 
-    A per-subsystem trial should not be penalised for particles it was never shown, so the
-    cells outside the subsystem are marked unowned before scoring. Everything else on the
-    record passes straight through.
+    A per-subsystem trial should not be penalised for particles it was never shown, so cells
+    outside the subsystem are marked unowned. Everything else passes straight through.
     """
 
     def __init__(self, record, truth_label):
@@ -59,10 +39,8 @@ class _RestrictedTruth:
     def truth_deposit(self):
         """Masked to match `truth_label`.
 
-        Without this the underlying record's property would be delegated through
-        ``__getattr__`` and would compute itself from the *unmasked* labels. The scorer
-        only ever reads it where the masked label is valid, so the result would happen to
-        come out right today -- but silently, and only by coincidence.
+        Without this override, ``__getattr__`` would delegate to the underlying record and
+        compute the deposit from the unmasked labels.
         """
         deposit = self._record.truth_deposit.copy()
         deposit[self.truth_label < 0] = 0.0
@@ -75,13 +53,9 @@ class _RestrictedTruth:
 def suggest_parameters(trial: optuna.Trial, subsystem: str, config: Mapping | None = None) -> dict[str, float]:
     """Draw one parameter set for `subsystem` from the configured search ranges.
 
-    The two outlier distances are sampled as a *multiple* of their density radius rather
-    than independently. They are only meaningful relative to it -- an outlier distance below
-    the density radius has no effect at all -- so sampling them freely would spend most of
-    the budget on combinations that cannot differ from one another.
-
-    Everything is sampled logarithmically: the ranges span two to three decades, and a
-    uniform draw would put almost every trial in the top decade.
+    The outlier distances are sampled as a multiple of their density radius rather than
+    independently, since one below the density radius has no effect at all. Everything is
+    sampled logarithmically, the ranges spanning two to three decades.
     """
     config = config or settings()["clue"]
     ranges = clue_search(subsystem)
@@ -97,10 +71,9 @@ def suggest_parameters(trial: optuna.Trial, subsystem: str, config: Mapping | No
     return params
 
 
-#: A trial producing more than this many clusters per truth particle is rejected without
-#: being scored. Such a parameter set has shattered the event into near-singletons and is
-#: never going to win, but the overlap matrix and the Hungarian solve both scale with the
-#: cluster count, so scoring it properly can cost minutes where a normal trial costs seconds.
+#: A trial producing more clusters than this per truth particle has shattered the event into
+#: near-singletons and cannot win, and the overlap matrix and Hungarian solve both scale with
+#: the cluster count, so it is rejected without being scored.
 MAX_CLUSTERS_PER_PARTICLE = 8
 
 
@@ -180,16 +153,22 @@ def make_objective(records: Sequence, subsystem: str):
 def tune_subsystem(records: Sequence, subsystem: str, storage_url: str | None = None) -> tuple[dict[str, float], float]:
     """Search for the best parameters for one subsystem.
 
+    Prints a warning for any optimum landing in the outer 5% of its log range: the true optimum
+    is then outside the box, and reporting CLUE at the edge would understate the baseline.
+
+    Args:
+        records: the tuning events, decoded once and reused by every trial.
+        subsystem: which subsystem to tune.
+        storage_url: optional Optuna storage URL, which also enables resuming a study.
+
     Returns:
         ``(parameters, objective_value)``, the parameters being the seven entries of
         :data:`~src.clue.pipeline.PARAMETER_NAMES` with the outlier distances multiplied out.
     """
     config = settings()["clue"]
 
-    # The dataset is in the study name, not just the coordinates and the subsystem. With a
-    # `--storage` URL and `load_if_exists`, a pu200 run would otherwise resume the pu0 study
-    # of the same name and return pu0's trials as its answer -- silently, and with a plausible
-    # objective value attached.
+    # The dataset is in the study name: with `--storage` and `load_if_exists`, a pu200 run
+    # would otherwise resume the pu0 study of the same name and return its trials.
     study = optuna.create_study(
         study_name=f"clue_{active_dataset()}_{config['coords']}_{subsystem}",
         direction="maximize",
@@ -204,14 +183,9 @@ def tune_subsystem(records: Sequence, subsystem: str, storage_url: str | None = 
     params["d_o_2d"] = params["d_c_2d"] * best["d_o_2d_factor"]
     params["d_o_3d"] = params["d_c_3d"] * best["d_o_3d_factor"]
 
-    # An optimum pressed against a search boundary is a tuning failure rather than a result:
-    # the real optimum is probably outside the range that was searched, and reporting CLUE
-    # at the edge would understate it.
-    #
-    # The test is on position within the LOG range, because that is how the parameters are
-    # sampled. Testing near-equality to the endpoint instead would essentially never fire:
-    # the optimiser rarely returns the exact bound, it returns something a few percent
-    # inside it, which is just as much a sign the range is wrong.
+    # Position within the log range, because that is how the parameters are sampled. Testing
+    # near-equality to the endpoint would essentially never fire: the optimiser returns something
+    # a few percent inside the bound, which is just as much a sign the range is wrong.
     ranges = clue_search(subsystem)
     for name in SEARCH_PARAMETERS:
         low, high = ranges[name]

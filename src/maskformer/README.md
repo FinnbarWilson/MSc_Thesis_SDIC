@@ -1,238 +1,148 @@
-# `src/maskformer/` — the learned model: training it, and producing the event store
+# `src/maskformer/`: training the model and dumping the event store
 
-The MaskFormer half of the comparison: the dataset, the model configuration, the launchers for
-both machines, and the evaluation dump that turns a trained checkpoint into an event store.
-Everything else under `src/` is deliberately numpy-only and runs on a laptop; this part is not.
+The GPU half of the project: the model configuration, the training launchers, and the dump that runs a trained checkpoint over a window of events and writes the event store the rest of the analysis reads.
 
-Read [`../../README.md`](../../README.md) first for what the comparison is and how the two
-methods are scored. **Nothing here is needed to reproduce the thesis figures** — that is
-`python -m scripts.make_thesis_figures --from-summary` from the repository root.
+You are here for one of two reasons:
 
-## The dependency boundary
+- **To dump an event store** from a checkpoint you fetched. That is step 4 of [Path 2](../../README.md#path-2-rerun-the-methods) in the root README. Skip to [step 3](#3-dump-the-event-stores) below.
+- **To train the model**, which is [Path 3](../../README.md#path-3-full-run). Steps 1 to 3 in order, once per pileup condition.
 
-`src/clue/`, `src/evaluation/`, `src/plotting/` and `src/io/` import nothing but
-numpy, scipy, pandas and matplotlib. The code here needs torch, `hepattn` and a GPU. Living in a
-sibling directory is not what keeps the two apart — **nothing importing across the line** is:
+Neither is needed to redraw the report's figures, which is Path 1.
 
-```bash
-grep -rn "src\.maskformer" --include="*.py" src scripts tests   # returns nothing
-```
+## Running it
 
-```
-  src/maskformer/  ──(writes)──>  event store (plain .npz)  ──(reads)──>  the rest of src/
-  GPU, hepattn, dataset                                          numpy and nothing else
-```
-
-`src/io/event_store.py` is a hand-written *mirror* of `hepattn_colliderml/eval/format.py`, not an
-import of it. Two readers of the same format, maintained side by side, is what keeps the boundary
-honest: if one side changes the format, the other fails loudly on a version check rather than
-silently misreading.
-
-There is no `__init__.py` at this level and there is not meant to be. This directory is a *source
-of record*, not an importable subpackage — `import src.maskformer` should not be a thing anyone
-can do, and leaving the `__init__.py` out is what enforces it.
-
-## What is mine and what is not
-
-The model is built from **`hepattn`** (<https://github.com/samvanstroud/hepattn>), an existing
-library for transformer-based reconstruction in HEP. I did not write it, and it is not reproduced
-here — vendoring someone else's framework into a thesis repository would misstate authorship in
-the one direction that matters.
-
-`hepattn` gained a ColliderML experiment upstream (commit `cb4fb10`, "Add ColliderML
-Experiment"), so this directory is a mixture. Checked file by file against that commit:
-
-| file | status |
-|---|---|
-| `configs/pu0.yaml`, `configs/pu200.yaml` | **mine** — not upstream |
-| `eval/dump.py`, `eval/format.py`, `eval/geometry.py` | **mine** — not upstream |
-| `data.py` | upstream file, **heavily modified** (889 lines differ): the shower-level truth collapse, the cell and particle selections, the calo association builders |
-| `model.py`, `main.py` | **upstream, unmodified** — byte-identical to `cb4fb10` |
-| `hepattn-changes.patch` | **mine** — three modifications to the library proper |
-
-Not mine either way: `hepattn` itself — the transformer encoder, the MaskFormer decoder, the task
-heads, the loss functions and the Hungarian matcher.
-
-Everything under `hepattn_colliderml/` is a **verbatim copy** of
-`hepattn/src/hepattn/experiments/colliderml/`, which is where it actually runs. Nothing else in
-this directory is. That is the reason for the extra nesting: the answer to "which files must stay
-byte-identical to upstream" is `ls hepattn_colliderml/` rather than a list someone has to keep in
-their head. Its filenames are upstream's and cannot be made more descriptive — `data.py` is
-imported as `hepattn.experiments.colliderml.data`. Check the copies against a checkout with:
+Assumes `setup/install_training_env.sh` has been run and the dataset downloaded, which are steps 1 and 2 of Path 2. Under Slurm, submit from the repository root: the launchers take the repository location from `SLURM_SUBMIT_DIR`, and the `#SBATCH` log paths are relative to it.
 
 ```bash
-HEPATTN=/path/to/hepattn ./verify_sync.sh
+mkdir -p external/slurm_logs
 ```
 
-`hepattn-changes.patch` holds three small modifications, kept as a patch rather than a copy so
-what I changed is separable from what was already there:
+### 1. Measure the throughput
 
-- `models/loss.py` — adds `mask_dice_weighted_loss`. The plain DICE loss documents that it ignores
-  its `sample_weight` argument and every existing caller passes one, so honouring it there would
-  have silently changed the objective of every configuration in the library. Opting in under a new
-  name cannot. Under a uniform weight it reduces exactly to the original.
-- `models/task.py` — adds `constituent_weight_field` to `ObjectHitMaskTask`, so the mask loss can
-  be weighted per cell.
-- `callbacks/prediction_writer.py` — an `output_name` argument. The writer named its output after
-  the data directory, and all three splits live in one directory here, so every split overwrote
-  the same file.
+```bash
+NUM_TRAIN=600 MAX_EPOCHS=1 sbatch src/maskformer/dias/train.sh          # DATASET=pu200 for the other
+```
 
-**A known defect in the upstream `model.py`, left unfixed on purpose.** Its `log_custom_metrics`
-does `pred_hit_masks &= ...` and `true_hit_masks &= ...` on tensors it holds by reference, so it
-mutates the `preds` and `targets` dicts in place. It is harmless as the wrapper currently calls it
-— logging runs after `model.loss()` and the batch is discarded afterwards — but it is one
-reordering away from corrupting the truth masks during training. It is upstream's code, so the fix
-belongs upstream or in the patch, not as a silent edit to a file claimed to be a verbatim mirror.
+Takes about 15 minutes and prints the `max_epochs` that fills the walltime. Do not skip it. OneCycleLR is sized from the total step count, so a wrong estimate does not just give a run of the wrong length, it gives a run whose final checkpoint sits at a high learning rate.
 
-**The hepattn pin.** `install_training_env.sh` pins `cb4fb10`. An earlier reference version,
-`30ccb9f`, no longer exists upstream — a fresh clone reports `fatal: Not a valid object name`, so
-it was rebased or squashed away. `hepattn-changes.patch` applies cleanly to `cb4fb10`, and also to
-`main`, `1df05cc` and `93b2842`, so this is the most specific surviving choice rather than the only
-one that works. Override with `HEPATTN_COMMIT=<sha> ./setup/install_training_env.sh`. Note the
-risk this leaves: upstream has deleted a pinned commit once and can again, at which point the
-checkpoint's provenance is no longer reconstructible from this repository alone.
+### 2. Set the schedule and train
 
-## Layout
+Put the printed number into `trainer.max_epochs` in `hepattn_colliderml/configs/pu0.yaml`, then:
+
+```bash
+sbatch src/maskformer/dias/train.sh
+```
+
+Checkpoints land in `external/hepattn/src/hepattn/experiments/colliderml/logs/<run>/ckpts/`. A day or more per condition.
+
+### 3. Dump the event stores
+
+The step that runs the model. It needs a GPU whether the checkpoint was trained here or fetched.
+
+```bash
+# absolute, because the launchers cd into the hepattn checkout before running
+CKPT=$(python -c "from pathlib import Path; from src.config import settings_for; print(Path(settings_for('pu0')['maskformer']['checkpoint']).resolve())")
+
+CKPT=$CKPT sbatch src/maskformer/dias/dump_store.sh pu0 eval
+CKPT=$CKPT sbatch src/maskformer/dias/dump_store.sh pu0 tune     # only for Path 3
+```
+
+Name the condition explicitly, as `settings_for('pu0')` does here: plain `settings()` returns whichever condition `dataset.active` happens to be, and the two have different checkpoints. If you trained your own, point `CKPT` at that file instead.
+
+The evaluation store is what the results are reported over. The tuning store is a separate 50-event window, needed only to re-derive CLUE's parameters or the MaskFormer working point, both of which are already committed. Both land in `external/eventstores/`, which is where `config/experiment.yaml` already looks. Lower `CHUNK` if the dump is killed for memory.
+
+### 4. Back to the root README
+
+```bash
+python -m scripts.show_config          # confirm it found the new store
+```
+
+Then Path 2 step 5, to score the store and rebuild the figures. Repeat all of the above for the other pileup condition.
+
+### On a machine without a scheduler
+
+`src/maskformer/ce_ai_1/` runs the same steps in the foreground:
+
+```bash
+cd src/maskformer/ce_ai_1
+NUM_TRAIN=600 MAX_EPOCHS=1 ./train.sh pu0
+nohup ./train.sh pu0 > ../../../external/train_pu0.log 2>&1 &
+CKPT=<absolute path> ./dump_store.sh pu0 eval
+```
+
+### Overrides
+
+Set these as environment variables at launch. The full list is in the header comment of each script.
+
+The two launcher sets differ in how they take the pileup condition. `dias/train.sh` reads `DATASET` (default `pu0`) because Slurm passes no arguments; every `ce_ai_1/` script and `dias/dump_store.sh` takes it as the first positional argument, as shown above.
+
+| variable | applies to | effect |
+|---|---|---|
+| `DATASET` | `dias/train.sh` | `pu0` or `pu200` |
+| `NUM_TRAIN`, `MAX_EPOCHS` | `train.sh` | override the config, for smoke tests |
+| `BATCH_SIZE`, `WORKERS` | `train.sh` | override the config; read the batch-size note in `configs/pu0.yaml` first |
+| `CKPT` | both | checkpoint to resume from, or to dump from |
+| `DATA_DIR` | `train.sh` | where `ttbar_<dataset>/` lives (default `external/ColliderML_data`) |
+| `STORE_ROOT` | `dias/dump_store.sh` | where the dump writes (default `external/eventstores`) |
+| `OUT` | `ce_ai_1/dump_store.sh` | the same, under a different name |
+| `CHUNK` | `dump_store.sh` | events held in memory per chunk file (25 at pu0, 10 at pu200) |
+| `COMET_API_KEY` | `train.sh` | read from the environment; the run warns and continues without it |
+
+## What is here
 
 ```
-hepattn_colliderml/          verbatim copy of hepattn/src/hepattn/experiments/colliderml/
-  data.py                    ColliderMLDataset / ColliderMLDataModule: reads the raw parquet
-                             shards, applies the cell and particle selections, and builds the
-                             truth targets -- including the shower-level collapse
-  model.py                   ColliderMLModel, a thin LightningModule wrapper
-  main.py                    CLI entry point (Lightning's LightningCLI)
+hepattn_colliderml/          copy of hepattn/src/hepattn/experiments/colliderml/
+  data.py                    reads the raw parquet, applies the selections, builds the truth
+                             targets including the shower-level collapse
+  model.py                   a thin LightningModule wrapper
+  main.py                    CLI entry point
   configs/pu0.yaml           pileup 0, full detector. Self-contained
   configs/pu200.yaml         pileup 200, barrel only. Self-contained
-  eval/dump.py               runs the model over an event window and writes an event store.
-                             The only GPU-dependent step of the analysis
-  eval/format.py             the on-disk store format. Mirrored by src/io/event_store.py
-  eval/geometry.py           recovers 48 ECAL and 36 HCAL layers by projecting barrel cells
-                             onto the stave normal
+  eval/dump.py               runs the model over an event window and writes an event store
+  eval/format.py             the on-disk store format, mirrored by src/io/event_store.py
+  eval/geometry.py           recovers 48 ECAL and 36 HCAL layers from cell positions
+  eval/bench_maskformer.py   per-event inference timing, the counterpart to scripts.bench_clue
 
-dias/                        Slurm launchers for DIAS, where pu0 was trained and scored
-ce_ai_1/                     launchers for ce-ai-1, where pu200 was trained and scored
+dias/                        Slurm launchers, where pu0 was trained and scored
+ce_ai_1/                     launchers for a single machine, where pu200 was trained and scored
 hepattn-changes.patch        my modifications to the upstream library
 verify_sync.sh               checks hepattn_colliderml/ against a hepattn checkout
 ```
 
-The launchers are **not** in `hepattn_colliderml/`, because they are mine and would make
-`verify_sync.sh` fail against a clean upstream. `configs/pu200.yaml` *is* in the mirror, because
-it is an experiment config `main.py` loads by path, exactly like the other overlays.
+Everything under `hepattn_colliderml/` is a copy of the experiment directory inside the `hepattn` checkout, which is where it actually runs. Both `env.sh` files re-copy it on every launch, because editing a config here and launching without that copy would silently use the stale one. The launchers sit outside that directory because they are mine and would make `verify_sync.sh` fail against a clean upstream.
 
-**There are exactly two configs, one per pileup condition, and neither is an overlay on the
-other.** That replaced a stack of nineteen overlay files. Overlays meant the objective a run
-actually used depended on the *order* of several `--config` flags, and because `tasks` is a YAML
-list, any overlay touching it replaced the whole list rather than merging into it — which is how
-one pu0 run ended up on a different mask objective from the one its base config documented. The
-two files are identical except where the data forces a difference, and those places are marked
-`PU200 DIFFERS` / `PU0 DIFFERS`; `diff configs/pu0.yaml configs/pu200.yaml` is the intended way to
-see what pileup changes.
+There is deliberately no `__init__.py` at this level: `import src.maskformer` should not be possible. `src/io/event_store.py` is a hand-written mirror of `eval/format.py` rather than an import of it, so if one side changes the format the other fails on a version check instead of silently misreading.
 
-## Why pileup 200 is not pileup 0 with more hits
+There are exactly two configs, one per condition, and neither is an overlay on the other. `tasks` is a YAML list, so any overlay touching it replaced the whole list rather than merging into it, which made the objective a run used depend on the order of its `--config` flags. The two files are identical except where the data forces a difference, and those places are marked `PU200 DIFFERS` and `PU0 DIFFERS`. `diff configs/pu0.yaml configs/pu200.yaml` shows what pileup changes.
 
-Measured on `ttbar_pu200` shard 0:
+## Adapting it to another cluster
 
-| | pu0 | pu200 | ratio |
-|---|---|---|---|
-| calo hits/event (> 2e-4 GeV) | ~22,000 | 532,507 | 24x |
-| target particles/event | ~600 | 8,182 | 13.6x |
+No path needs editing; `setup/paths.sh` derives every location from the repository root. Set `COLLIDERML_DATA` and `CALO_STORE_ROOT` to move the dataset and the stores off it.
 
-MaskFormer's memory is driven by `num_queries x num_hits`. pu0 sits at 2.2e7 and already OOMs at
-batch 4 on an 80 GB A100. A faithful pu200 event is 4.4e9 — about **200x the pu0 footprint**, two
-orders of magnitude past the card rather than a tuning problem. `configs/pu200.yaml` buys that
-back by restricting to the barrel (|eta| <= 0.88); its header carries the full arithmetic, the
-energy cost, and the OOM ladder.
+What will not carry over is the machine configuration. `dias/` targets RHEL7 with Slurm, so it runs everything inside an Apptainer container built from `docker://ubuntu:22.04`, pins `CC`/`CXX` at the conda-forge GCC because Triton shells out to a compiler during driver initialisation, and asks for two GPUs so that `env.sh`'s `select_gpu` can avoid a card reporting uncorrected ECC errors. `ce_ai_1/` needs none of that. Read whichever is closer and expect to change the `#SBATCH` resource lines, the partition name and the container.
 
-The pu200 model is trained as **its own model**, not the pu0 checkpoint evaluated on pu200 — a
-pu0-trained model run on pu200 measures domain shift, not the architecture. It got a 5x smaller
-training budget (24,000 steps against 120,000), which the thesis states wherever the two columns
-are compared.
+The `--mem` values look far too large for the work being done and are not negotiable on that cluster: Slurm applies `VSizeFactor` there, making `--mem` a hard virtual memory cap of 1.1x the request, while `expandable_segments` reserves a large virtual range at start-up. An under-request surfaces as `CUDA driver error: out of memory` on an idle 80 GB card.
 
-## Event budget
+Comet logging in `configs/*.yaml` points at a workspace you will not have access to. Change `workspace` or set `online: false`.
 
-100 shards x 100 events = 10,000 pu200 events downloaded, of 1000 shards available. All windows
-disjoint, split between `configs/pu200.yaml` and `config/experiment.yaml`:
+## Authorship
 
-```
-train [0, 6000)   val [6000, 6250)   test [6250, 6750)
-CLUE tune store [7000, 7050)    CLUE eval store [7500, 8000)    spare [8000, 10000)
-```
+The model is built from [`hepattn`](https://github.com/samvanstroud/hepattn), an existing library for transformer-based reconstruction in HEP. I did not write it and it is not reproduced here. `hepattn` gained a ColliderML experiment upstream at commit `cb4fb10`, so this directory is a mixture. Checked file by file against that commit:
 
-`train.sh pu200` refuses to start if `NUM_TRAIN` would run into the store windows, because
-training on the events the comparison is scored over is the one error that makes every downstream
-number wrong while looking fine. For more events: `python setup/download_data.py --shards 200`.
+| file | status |
+|---|---|
+| `configs/pu0.yaml`, `configs/pu200.yaml` | mine, not upstream |
+| `eval/dump.py`, `eval/format.py`, `eval/geometry.py`, `eval/bench_maskformer.py` | mine, not upstream |
+| `data.py` | upstream file, heavily modified (889 lines differ): the shower-level truth collapse, the cell and particle selections, the calo association builders |
+| `model.py`, `main.py` | upstream, unmodified, byte-identical to `cb4fb10` |
+| `hepattn-changes.patch` | mine: three modifications to the library proper |
 
-## Running it
+Not mine either way: `hepattn` itself, meaning the transformer encoder, the MaskFormer decoder, the task heads, the loss functions and the Hungarian matcher.
 
-Everything below assumes the training env from `setup/install_training_env.sh`. `ce_ai_1/env.sh`
-re-syncs this directory into the hepattn checkout on every launch, because `main.py` runs from the
-checkout and editing a config here without copying it across silently uses the stale copy.
+`hepattn-changes.patch` is kept as a patch rather than a copy so that what I changed stays separable:
 
-```bash
-cd src/maskformer/ce_ai_1
+- `models/loss.py` adds `mask_dice_weighted_loss`. The plain DICE loss documents that it ignores its `sample_weight` argument and every existing caller passes one, so honouring it there would have silently changed the objective of every configuration in the library. Under a uniform weight the new function reduces exactly to the original.
+- `models/task.py` adds `constituent_weight_field` to `ObjectHitMaskTask`, so the mask loss can be weighted per cell.
+- `callbacks/prediction_writer.py` adds an `output_name` argument. The writer named its output after the data directory, and all three splits live in one directory here, so every split overwrote the same file.
 
-# 1. does it fit, and how fast? ~15 min. Prints the max_epochs for a 22 h run.
-NUM_TRAIN=600 MAX_EPOCHS=1 ./train.sh pu200
-
-# 2. set trainer.max_epochs in configs/pu200.yaml from what step 1 printed, then:
-nohup ./train.sh pu200 > ../../../external/train_pu200.log 2>&1 &
-
-# 3. both stores, from the trained checkpoint
-CKPT=<logs/.../ckpts/....ckpt> ./dump_store.sh pu200 tune
-CKPT=<logs/.../ckpts/....ckpt> ./dump_store.sh pu200 eval
-```
-
-**Step 1 is not optional.** OneCycleLR is sized from total steps, so a wrong throughput estimate
-does not just give a run of the wrong length — it gives a run whose final checkpoint sits at a
-high learning rate.
-
-Then point `config/experiment.yaml` at the new stores (`dataset.pu200.store`, `.tune_store`,
-`.overrides.maskformer.checkpoint`), confirm with `python -m scripts.show_config`, and continue
-with the numpy-only pipeline in the root README.
-
-### What differs between the two machines
-
-| | DIAS (pu0) | ce-ai-1 (pu200) |
-|---|---|---|
-| scheduling | Slurm, 20 h walltime cap | run directly, `nohup` for long runs |
-| OS | RHEL7, glibc 2.17 → apptainer container | Ubuntu 24.04 → no container |
-| python env | pixi env inside the container | plain venv on system python 3.12 |
-| GPU | 3 x A100, one with 818 uncorrected ECC errors | 1 x A100 80 GB, healthy |
-| storage | `$HOME` had room | everything on `/mnt/ai-datastore/finnbar` |
-
-On DIAS both environments are built *and* run inside `~/ubuntu22.sif`, because hepattn and the
-pinned conda-forge builds need glibc 2.28+:
-
-```bash
-apptainer build ~/ubuntu22.sif docker://ubuntu:22.04
-apptainer exec --bind $HOME ~/ubuntu22.sif bash setup/install_analysis_env.sh
-```
-
-The image is the bare `ubuntu:22.04` base and ships no compiler and no `curl`. `dias/env.sh`
-points `CC`/`CXX` at the pixi env's conda-forge GCC — without it Triton cannot initialise its
-driver and training dies at the first kernel — and `install_analysis_env.sh` falls back to wget or
-python for the miniforge download.
-
-`config/experiment.yaml` holds ce-ai-1's `/mnt/ai-datastore` paths. `CALO_STORE_ROOT` relocates
-them without editing the config, so one config stays valid on both machines; only the directory
-moves, since the store *name* encodes the window and format version `EventStore` checks.
-
-The `--mem` values in the Slurm scripts look absurd for the work being done and are not
-negotiable: Slurm here applies `VSizeFactor`, so `--mem` is a hard *virtual* memory cap of 1.1x
-the request, and `expandable_segments` reserves a large virtual range at start-up. An
-under-request surfaces as `CUDA driver error: out of memory` on an idle 80 GB card.
-
-## The checkpoint — and why there is none here
-
-**No checkpoint is tracked in this repository.** One was, and it was deleted: it had been trained
-on an objective the thesis no longer uses, so it could not produce any reported number while
-looking as though it could, and it was 90% of the repository's tracked bytes.
-`git log -- src/maskformer/checkpoint/` recovers it with its provenance intact.
-
-Training writes checkpoints to `external/hepattn/.../logs/<run>/ckpts/`, which is gitignored and
-machine-local. Each run also writes its own fully-resolved `config.yaml` beside them — that file,
-not `configs/pu0.yaml`, is the authoritative record of what was trained, because the configs move
-on. A checkpoint is needed only to dump an event store; nothing in `scripts/` touches one.
-
-`COMET_API_KEY` is read from `~/.config/colliderml/comet.env` (mode 0600), outside the git
-worktree so it cannot be committed.
+Check the copies against a checkout with `HEPATTN=/path/to/hepattn ./verify_sync.sh`.

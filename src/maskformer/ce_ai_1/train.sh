@@ -4,22 +4,18 @@
 #   nohup ./train.sh pu0   > ../../../external/train_pu0.log   2>&1 &
 #   nohup ./train.sh pu200 > ../../../external/train_pu200.log 2>&1 &
 #
-# ONE SCRIPT AND ONE CONFIG PER RUN. This replaced train_pu0.sh and train_pu200.sh, and the
-# overlay stack they drove, on 2026-08-12. Overlays meant the objective a run actually used
-# depended on the ORDER of several --config flags, and because `tasks` is a YAML list any overlay
-# touching it replaced the whole list rather than merging into it -- which is how the pu0 run of
-# 2026-08-11 ended up on a different mask objective from the one its base config documented.
-# configs/pu0.yaml and configs/pu200.yaml are now each self-contained.
+# One script and one self-contained config per run, rather than an overlay stack: `tasks` is a
+# YAML list, so any overlay touching it replaced the whole list rather than merging into it, and
+# the objective a run used depended on the order of its --config flags.
 #
-# Overrides for smoke tests and resumes, unchanged:
+# Overrides for smoke tests and resumes:
 #   NUM_TRAIN=2000 MAX_EPOCHS=1 ./train.sh pu0        # smoke
 #   CKPT=logs/<run>/ckpts/last.ckpt ./train.sh pu0    # resume
 #
-# SIZE max_epochs BEFORE COMMITTING TO A LONG pu200 RUN. configs/pu200.yaml carries pu0's schedule
-# and says so: launch, watch ~300 steps, set max_epochs from the measured rate, relaunch.
-# OneCycleLR is sized from total optimiser steps and cannot be resized mid-run, so a run that
-# overruns its walltime never reaches its decay phase and its final checkpoint sits at a high
-# learning rate.
+# Size max_epochs before committing to a long run: launch, watch ~300 steps, set it from the
+# measured rate, relaunch. OneCycleLR is sized from total optimiser steps and cannot be resized
+# mid-run, so a run that overruns never reaches its decay phase and its final checkpoint sits at
+# a high learning rate.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +33,7 @@ cd "$EXP_DIR"
 # Preflight, pu200 only: refuse to start if the training window overlaps a CLUE store window. The
 # stores for the head-to-head come from events [7000,7050) and [7500,8000); training into them
 # would make the comparison a test on training data. src/io/event_store.py asserts this at scoring
-# time, but that is hours later -- fail here instead. pu0 has 100,000 events and trains on
+# time, but that is hours later, so fail here instead. pu0 has 100,000 events and trains on
 # [0, 20000) with val/test above it, so nothing currently overlaps there.
 if [ "$DATASET" = "pu200" ]; then
     "$PYTHON" - "${NUM_TRAIN:-6000}" <<'PY' || exit 2
@@ -55,6 +51,11 @@ EXTRA_ARGS=()
 [ -n "${NUM_TRAIN:-}" ]  && EXTRA_ARGS+=(--data.num_train "$NUM_TRAIN")
 [ -n "${MAX_EPOCHS:-}" ] && EXTRA_ARGS+=(--trainer.max_epochs "$MAX_EPOCHS")
 [ -n "${CKPT:-}" ]       && EXTRA_ARGS+=(--ckpt_path "$CKPT")
+# The config's data directories are this machine's. DATA_DIR points them elsewhere.
+if [ -n "${DATA_DIR:-}" ]; then
+    SHARDS="$DATA_DIR/ttbar_${DATASET}/"
+    EXTRA_ARGS+=(--data.train_dir "$SHARDS" --data.val_dir "$SHARDS" --data.test_dir "$SHARDS")
+fi
 
 echo "host      : $(hostname)"
 echo "started   : $(date)"
@@ -64,7 +65,7 @@ echo "extra     : ${EXTRA_ARGS[*]:-(none)}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
 if [ -z "${COMET_API_KEY:-}" ]; then
-    echo "WARNING: COMET_API_KEY unset -- Comet logging will fail. See ce_ai_1/env.sh."
+    echo "WARNING: COMET_API_KEY unset; Comet logging will fail. See ce_ai_1/env.sh."
 fi
 
 exec "$PYTHON" main.py fit \

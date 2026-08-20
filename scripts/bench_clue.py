@@ -3,21 +3,14 @@
     python -m scripts.bench_clue --backend "cpu serial"
     python -m scripts.bench_clue --backend "cpu openmp" --dataset pu0
 
-THE QUESTION THIS ANSWERS is not how well CLUE clusters -- `scripts.score` owns that -- but
-how fast it could do so if a detector handed it an event. So no truth is read, nothing is
-scored, and the timed region is exactly one boundary:
+The timed region is exactly ``cluster_event``: cell arrays already in host RAM, to an int32
+label per cell. No truth is read and nothing is scored. Reading the event out of the store sits
+outside the clock, so every record is materialised before it starts, and
+``eval/bench_maskformer.py`` draws the boundary in the same place, which is the only reason the
+two numbers can go in one table.
 
-    cell arrays already in host RAM  ->  an int32 cluster label per cell, back in host RAM
-
-which is `cluster_event` and nothing else. Reading the event out of the store is deliberately
-outside it: the store is an artefact of this study, not of a detector, and its npz decode
-would otherwise be charged to CLUE. Every record is therefore materialised BEFORE the clock
-starts. `scripts.bench_maskformer` draws the same boundary in the same place, which is the
-only reason the two numbers can be put in one table.
-
-The arguments handed to `cluster_event` are read from the same config keys `scripts.score`
-uses, so what is timed here is what was scored there. If those two drift apart the table
-measures a pipeline nobody ran.
+The arguments handed to ``cluster_event`` come from the same config keys `scripts.score` uses.
+Writes ``bench_clue_<backend>.json``.
 """
 
 import argparse
@@ -45,10 +38,13 @@ def backend_slug(backend: str) -> str:
 def check_backend(backend: str) -> None:
     """Refuse to time a backend CLUEstering cannot actually run.
 
-    THIS IS NOT DEFENSIVE PADDING. `run_clue` handles a missing backend by printing
-    "CUDA module not found" and returning with `cluster_ids` untouched -- it does not raise.
-    The conda-forge wheel ships no GPU module, so timing `gpu cuda` against a stock install
-    measures a no-op and reports it as a spectacular speed-up. See setup/build_clue_cuda.sh.
+    `run_clue` handles a missing backend by printing "CUDA module not found" and returning with
+    `cluster_ids` untouched; it does not raise. The conda-forge wheel ships no GPU module, so
+    timing `gpu cuda` against a stock install measures a no-op and reports it as a large
+    speed-up. See setup/build_clue_cuda.sh.
+
+    Raises:
+        SystemExit: if CLUEstering was built without `backend`.
     """
     import CLUEstering as clue
 
@@ -100,15 +96,14 @@ def verify_against_serial(records, params, kwargs, backend: str) -> None:
 
 
 def competing_gpu_processes() -> dict:
-    """How many OTHER processes held the GPU while this ran.
+    """How many other processes held the GPU while this ran.
 
-    RECORDED BECAUSE IT ONCE INVALIDATED A WHOLE ROW. CLUE's GPU path is latency-bound -- it
-    launches one small kernel per detector layer and waits -- so it degrades under time-slicing
-    far worse than a throughput-bound workload does. A first pass at this benchmark ran while
-    three other jobs held the card and measured 9.9 s per event; the same code on a quieter
-    machine measures 0.38 s. Nothing in the timing distribution revealed it: the three passes
-    agreed with each other to 8%, because the contention was steady rather than bursty. The
-    only defence is to write down what else was on the device.
+    CLUE's GPU path is latency-bound, launching one small kernel per detector layer and waiting,
+    so it degrades under time-slicing far worse than a throughput-bound workload does. A first
+    pass at this benchmark ran with three other jobs on the card and measured 9.9 s per event
+    against 0.38 s on a quiet machine, and nothing in the timing distribution revealed it: the
+    three passes agreed to 8%, the contention being steady rather than bursty. Recording what
+    else was on the device is the only defence.
     """
     import os
     import subprocess
@@ -157,11 +152,9 @@ def main() -> None:
                         help="send stage 2 (the 3D centroid pass) to a different backend from stage 1")
     args = parser.parse_args()
 
-    # Stage routing, applied by wrapping the pipeline's private entry point rather than by
-    # changing it. The two stages present very different problems -- stage 1 is ~160 calls of a
-    # few hundred points, stage 2 is a handful of calls over tens of thousands -- so the device
-    # that suits one need not suit the other. src/clue/pipeline.py is deliberately left alone:
-    # this is a measurement, not a change to the pipeline that produced the physics.
+    # Stage routing by wrapping the pipeline's entry point rather than changing it. Stage 1 is
+    # ~160 calls of a few hundred points and stage 2 a handful over tens of thousands, so the
+    # device suiting one need not suit the other.
     if args.backend_3d:
         untouched = pipeline._run_clue
 
@@ -209,9 +202,8 @@ def main() -> None:
     if len(store) < n_needed:
         raise SystemExit(f"store holds {len(store)} events, need {n_needed}")
 
-    # Decode every event up front. An npz read inside the timed region would be charged to
-    # CLUE, and the first read of a chunk is far slower than the rest, which would land
-    # entirely on whichever events happen to open a new file.
+    # Decode every event up front: an npz read inside the timed region would be charged to
+    # CLUE, and the first read of a chunk is far slower than the rest.
     print(f"materialising {n_needed} events ...", flush=True)
     records = [store[i] for i in range(n_needed)]
     warm, timed = records[: args.warmup], records[args.warmup :]

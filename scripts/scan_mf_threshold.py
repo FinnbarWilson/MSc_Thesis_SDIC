@@ -1,26 +1,15 @@
-"""Choose the MaskFormer working point, on the tuning window.
+"""Choose the MaskFormer working point on the tuning window.
 
     python -m scripts.scan_mf_threshold
 
-Two thresholds turn the model's raw output into clusters:
+Two thresholds turn the model's output into clusters: ``mask_threshold`` decides whether a cell
+is in a query's cluster, ``object_threshold`` whether a query is a real particle. Both are
+post-hoc, the store keeping mask probabilities down to 0.02, so every grid point is re-derived
+offline with no GPU.
 
-    mask_threshold    per CELL: is this cell in this query's cluster?
-    object_threshold  per QUERY: is this query a real particle at all, or an empty slot?
-
-Both are post-hoc. The event store keeps the mask probabilities down to 0.02, so every point on
-this grid is re-derived offline with no GPU and no re-clustering -- unlike CLUE, where each
-working point costs a full re-run. That is why this scan is cheap and `scan_working_points` is
-not.
-
-Runs on the TUNE store and picks by f1, which is the same window and the same criterion
-`scripts.tune_clue` uses for CLUE. That symmetry is the point: neither method may choose its
-working point on the events it is reported over, and neither may choose it by a friendlier rule
-than the other.
-
-WHAT THE OUTPUT IS FOR. Set `maskformer.mask_threshold` / `.object_threshold` in
-config/experiment.yaml from the top row, then re-run `scripts.score`. Also worth reading is how
-FLAT the grid is in the mask direction: if f1 barely moves as mask_threshold sweeps its whole
-range, the mask head is not what limits the model and the object head is.
+Runs on the tune store and picks by f1, the same window and criterion `scripts.tune_clue` uses
+for CLUE. Set the two keys in ``config/experiment.yaml`` from the top row and re-run
+`scripts.score`. Writes ``mf_threshold_scan.parquet``.
 """
 
 import argparse

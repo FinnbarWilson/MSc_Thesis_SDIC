@@ -1,39 +1,20 @@
 """Time MaskFormer's clustering of one event, with nothing else in the measurement.
 
     python -m hepattn.experiments.colliderml.eval.bench_maskformer \
-        --store /mnt/ai-datastore/finnbar/eventstore_pu200_v2/ttbar_pu200_7500_8000_v2 --dataset pu200
+        --store <event store> --dataset pu200
 
-The counterpart to `scripts.bench_clue`, and the boundary is drawn in the same place:
+The counterpart to `scripts.bench_clue`, with the boundary drawn in the same place: cell arrays
+already in host RAM, to an int32 label per cell back in host RAM. The host-to-device copy, the
+forward pass, the thresholding into an exclusive partition and the copy back are inside the
+clock; reading the event out of the store is outside it. No truth is touched and no Hungarian
+matching runs, that matcher being a training-time device with no inference-time analogue.
 
-    cell arrays already in host RAM  ->  an int32 cluster label per cell, back in host RAM
-
-so the host-to-device copy, the forward pass, the thresholding into an exclusive partition
-and the copy of the labels back are all inside the clock, while reading the event out of the
-store is outside it. No truth is touched, nothing is scored, and no Hungarian matching runs --
-the matcher in `model.py` is a training-time device for permuting the loss and has no
-inference-time analogue, which is exactly why a timing comparison against CLUE is meaningful
-at all.
-
-TWO THINGS THIS DOES NOT DO THE OBVIOUS WAY.
-
-*   Inputs come from `ColliderMLDataset`, not from the event store, even though the store
-    holds the very same cells and reading it would be far cheaper. THE ORDER IS THE REASON.
-    The store keeps cells in geometry order, `lexsort((phi, layer, subsystem))`, while the
-    encoder uses windowed attention over hits sorted by phi -- so a permutation of the input
-    decides which hits share a window, and the model is not permutation-invariant. Feeding it
-    store-order cells was measured to move 2.9% of cells to a different cluster and to shift
-    object probabilities by up to 0.55. The cost of a forward pass would have been the same
-    either way, but the clustering being timed would not have been the clustering the thesis
-    scored. Decoding is done once, up front, through a DataLoader worker -- see the comment
-    in `main` for why the worker is load-bearing -- and the timed region sees only host
-    tensors that are already sitting in RAM.
-
-*   Thresholding runs live on the GPU against the raw logits. `EventRecord.maskformer_labels`
-    does the same arithmetic in numpy against the stored uint8-quantised CSR, but that store
-    is an artefact of this study; a detector-fed system would have the logits in device
-    memory and would threshold them there. Because sigmoid is monotonic the probability cut
-    is applied as a cut on the logit directly, so no sigmoid is evaluated over the
-    [n_queries, n_hits] matrix at all.
+Inputs come from `ColliderMLDataset` rather than from the event store, even though the store
+holds the same cells and is cheaper to read, because the order differs: the store keeps cells in
+geometry order while the encoder uses windowed attention over hits sorted by phi, so a
+permutation decides which hits share a window and the model is not permutation-invariant.
+Feeding store-order cells was measured to move 2.9% of cells to a different cluster. Decoding
+happens once, up front, so the timed region sees only host tensors already in RAM.
 """
 
 import argparse
@@ -45,18 +26,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
-
 from hepattn.experiments.colliderml.eval.dump import build_dataset
 from hepattn.experiments.colliderml.model import ColliderMLModel
+from torch.utils.data import DataLoader
 
-# The event store reader lives in the analysis half of the repository, which is plain numpy
-# on purpose. Importing it here is the one place the two halves meet, and it is a read of a
-# file format rather than a dependency on any of the scoring code.
-#
-# Found by walking up rather than counting parents: this file is executed from the copy that
+
+# Found by walking up rather than counting parents: this file runs from the copy
 # install_training_env.sh drops into the hepattn checkout, which sits deeper than its source of
-# record in src/maskformer/, so a fixed parents[n] is right in one location and wrong in the other.
+# record, so a fixed parents[n] would be right in one location and wrong in the other.
 def _repo_root() -> Path:
     for candidate in Path(__file__).resolve().parents:
         if (candidate / "src" / "io" / "event_store.py").exists() and (candidate / "config" / "experiment.yaml").exists():
@@ -69,15 +46,14 @@ REPO_ROOT = _repo_root()
 sys.path.insert(0, str(REPO_ROOT))
 from src.io.event_store import EventStore  # noqa: E402
 
-
 INPUT_FIELDS = ("x", "y", "z", "r", "eta", "phi", "log_energy", "valid")
 
 
 def host_inputs(sample_inputs: dict) -> dict[str, torch.Tensor]:
     """The tensors the model consumes, pinned to the host and nothing else.
 
-    `ColliderMLDataset` returns a great deal more than the InputNet reads -- detector ids,
-    contribution sums, the truth side -- and carrying it into the timed loop would inflate
+    `ColliderMLDataset` returns a great deal more than the InputNet reads: detector ids,
+    contribution sums, the truth side. Carrying it into the timed loop would inflate
     both the host-to-device copy and the memory footprint of holding 100 events at once.
     """
     return {f"calohit_{f}": sample_inputs[f"calohit_{f}"] for f in INPUT_FIELDS}
@@ -135,15 +111,11 @@ def labels_from_logits(
 
 
 def competing_gpu_processes() -> dict:
-    """How many OTHER processes held the GPU while this ran.
+    """How many other processes held the GPU while this ran.
 
-    RECORDED BECAUSE IT ONCE INVALIDATED A WHOLE ROW. CLUE's GPU path is latency-bound -- it
-    launches one small kernel per detector layer and waits -- so it degrades under time-slicing
-    far worse than a throughput-bound workload does. A first pass at this benchmark ran while
-    three other jobs held the card and measured 9.9 s per event; the same code on a quieter
-    machine measures 0.38 s. Nothing in the timing distribution revealed it: the three passes
-    agreed with each other to 8%, because the contention was steady rather than bursty. The
-    only defence is to write down what else was on the device.
+    A benchmark sharing the card measures the sharing as much as the code, and contention that is
+    steady rather than bursty does not show up as spread between passes. Recording what else was
+    on the device is the only defence.
     """
     import os
     import subprocess
@@ -191,9 +163,9 @@ def main() -> None:
     ckpt = args.ckpt or Path(store.meta["maskformer"]["checkpoint"])
     run_config = args.run_config or Path(store.meta["maskformer"]["run_config"])
     if not ckpt.exists():
-        raise SystemExit(f"checkpoint {ckpt} does not exist -- pass --ckpt")
+        raise SystemExit(f"checkpoint {ckpt} does not exist; pass --ckpt")
     if not run_config.exists():
-        raise SystemExit(f"run config {run_config} does not exist -- pass --run-config")
+        raise SystemExit(f"run config {run_config} does not exist; pass --run-config")
 
     gpu_before = competing_gpu_processes()
     if gpu_before.get("n_other_processes"):
@@ -220,14 +192,10 @@ def main() -> None:
     # this script reads targets. Disabling it leaves the input side untouched.
     dataset.build_calohit_associations = False
 
-    # THROUGH A DATALOADER, exactly as eval/dump.py did, and this is not cosmetic. Indexing
-    # the dataset directly in this process gives predictions that differ from the ones in the
-    # store -- measured at mean 0.010 and up to 0.41 in object probability, flipping 32 of
-    # 1600 queries across the 0.5 decision boundary -- while going through a worker reproduces
-    # them BIT-EXACTLY. The tensors are numerically identical either way; what changes is that
-    # a worker's arrive through shared memory as freshly allocated buffers, and some kernel in
-    # the bf16 stack is sensitive to that. Timing an event whose clustering does not match the
-    # scored one would have been the wrong measurement, so the loader stays.
+    # Through a DataLoader, as eval/dump.py did, and this is not cosmetic: indexing the dataset
+    # directly in this process shifts object probabilities enough to flip queries across the
+    # decision boundary, while going through a worker reproduces the store bit-exactly. Timing an
+    # event whose clustering does not match the scored one would be the wrong measurement.
     print(f"decoding {n_needed} events through ColliderMLDataset ...", flush=True)
     loader = DataLoader(dataset, batch_size=None, shuffle=False, num_workers=args.num_workers, pin_memory=False)
     hosts, records = [], []
@@ -261,11 +229,9 @@ def main() -> None:
         with torch.no_grad(), autocast:
             for record, host in zip(records[: args.check], hosts[: args.check]):
                 live, _, live_valid = infer(host, return_valid=True)
-                # The sharp test, and an order-free one: the object head's probability per
-                # query, against what the dump wrote for the same query. Cell labels can only
-                # ever agree up to the +/-0.031 logit half-step of the store's uint8
-                # quantisation, so a partition comparison alone would not distinguish a
-                # correct input from a slightly wrong one.
+                # The sharp, order-free test: object probability per query against what the
+                # dump wrote. Cell labels agree only to the store's uint8 half-step, so a
+                # partition comparison alone could not tell a correct input from a near one.
                 q = record.mf_query_index.astype(np.int64)
                 deltas.append(float(np.abs(live_valid[q] - record.mf_valid_prob.astype(np.float64)).max()))
 

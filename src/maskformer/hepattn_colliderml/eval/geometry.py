@@ -1,34 +1,24 @@
 """Calorimeter layer geometry, recovered from cell positions.
 
-The evaluation needs a layer index per cell, because the CLUE baseline clusters within a
-layer before linking layers into a shower. Nothing in the ColliderML files provides one, so
-it has to be derived from the positions.
+CLUE clusters within a layer before linking layers into a shower, and nothing in the ColliderML
+files provides a layer index, so it is derived from the positions.
 
-For the endcaps a layer is a plane of constant \\|z\\| and the derivation is trivial. The barrels
-are the interesting case: they are 16-fold polygonal, built from flat staves, so a single
-layer spans a *range* of radii and clustering on r alone would smear ~48 layers into several
-hundred bands. Projecting onto the stave normal collapses each flat plate back to one
-constant depth:
+For the endcaps a layer is a plane of constant \\|z\\|. The barrels are 16-fold polygonal, built
+from flat staves, so one layer spans a range of radii and clustering on r alone would smear ~48
+layers into several hundred bands. Projecting onto the stave normal collapses each plate back to
+a constant depth::
 
     period    = 2*pi/16
     phi_local = mod(phi + period/2, period) - period/2     # angle within the stave
     depth     = r * cos(phi_local)                         # perpendicular distance to the axis
 
-Pooling 60 events and splitting wherever consecutive depths differ by more than 1 mm gives:
+Pooling events and splitting where consecutive depths differ by more than 1 mm gives 48 layers
+of 5.05 mm in each ECAL and 36 of 51.00 mm in each HCAL, uniform to 0.01 mm in barrel and endcap
+alike. That uniformity checks the projection: a wrong stave count gives ragged spacings.
 
-    ecb  48 layers, pitch 5.05 mm      ece  48 layers, pitch 5.05 mm
-    hcb  36 layers, pitch 51.00 mm     hce  36 layers, pitch 51.00 mm
-
-ECAL and HCAL each come out with the same layer count and the same pitch in barrel and
-endcap, and the pitch is uniform to 0.01 mm. That uniformity is the check that the
-projection is right: a wrong stave count gives ragged, unphysical spacings (N=8 -> 32
-layers, N=12 -> 15, N=20 -> 7 for ecb). The 1 mm tolerance sits on a plateau -- 2 mm gives
-the same answer, 0.5 mm starts over-splitting (54 and 39) -- so it is not a tuned number.
-
-The edges are calibrated ONCE and frozen into the event-store metadata. They must not be
-re-derived per event: a sparse subsystem leaves most of its layers unlit in any single
-event, which undercounts them (hcb gives 26 per event against its true 36) and would make
-the layer index mean different things in different events.
+The edges are calibrated once and frozen into the store metadata. Re-deriving them per event
+would make the layer index mean different things in different events, since a sparse subsystem
+leaves most of its layers unlit in any one event.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -131,7 +121,7 @@ def assign_layers(subsystem: str, x: np.ndarray, y: np.ndarray, z: np.ndarray, c
         msg = (
             f"{subsystem}: cell at depth {depth[worst]:.6f} m is {residual[worst] * 1e3:.2f} mm from "
             f"layer {index[worst]} (pitch {pitch * 1e3:.2f} mm). The frozen layer geometry does not "
-            f"describe this data -- re-run the layer calibration."
+            f"describe this data. Re-run the layer calibration."
         )
         raise ValueError(msg)
 
@@ -143,17 +133,15 @@ def check_layer_counts(centres_by_subsystem: Mapping[str, np.ndarray], populated
 
     Args:
         centres_by_subsystem: calibrated layer centres, keyed by subsystem.
-        populated: the subsystems that actually HAVE cells in the sample. Defaults to all four.
-            A barrel-only sample legitimately has none in the endcaps, and requiring all four
-            there would reject a valid store -- but defaulting to all four keeps the check at
-            full strength for anyone who does not pass it.
+        populated: the subsystems that actually have cells in the sample, defaulting to all
+            four. A barrel-only sample legitimately has none in the endcaps, so requiring all
+            four would reject a valid store. The guard keeps its strength either way: every
+            subsystem that has cells must still produce exactly its expected layer count, and
+            the caller derives `populated` from the same scan.
 
-    WHY A SUBSET IS ALLOWED AT ALL. `configs/pu200.yaml` cuts |eta| < 0.88, which
-    removes every endcap cell, so calibration finds {'ecb': 48, 'hcb': 36} and nothing else. That
-    is correct, not a failure. The guard's real job -- catching a dataset change that silently
-    renumbers layers -- is unaffected: every subsystem that HAS cells is still required to produce
-    exactly its expected count, and a subsystem that has cells cannot be absent from `populated`
-    because the caller derives that set from the same scan.
+    Raises:
+        ValueError: if a populated subsystem's layer count is not the expected one, which is
+            what a dataset change silently renumbering layers would look like.
     """
     expected = dict(EXPECTED_NUM_LAYERS) if populated is None else {name: EXPECTED_NUM_LAYERS[name] for name in populated}
     if not expected:

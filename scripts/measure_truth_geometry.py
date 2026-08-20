@@ -1,35 +1,18 @@
-"""Properties of the TRUTH, measured from the event store, for the methodology chapter.
+"""Measure properties of the truth partition, for the methodology chapter.
 
-    python -m scripts.measure_truth_geometry
-    python -m scripts.measure_truth_geometry --events 100
+    python -m scripts.measure_truth_geometry [--events 100]
 
-None of these depend on a clustering method: they are statements about the target definition and
-the detector, and each one is quoted in the methodology. They lived there as recorded numbers with
-no producing code, which meant a definition change could silently invalidate them. This script is
-that producing code.
+None of these depend on a clustering method; each is a statement about the target definition and
+the detector, and each is quoted in the report:
 
-WHAT IS MEASURED, and why each is in the chapter:
+  1. what the exclusive truth partition discards, in associations and in energy;
+  2. what fraction of targets span a subsystem boundary, which is what justifies CLUE's
+     cross-subsystem linking stage;
+  3. what fraction of calorimeter energy belongs to any target, whose complement is a ceiling on
+     every energy-weighted metric.
 
-1. THE COST OF THE EXCLUSIVE TRUTH PARTITION. Scoring assigns each cell to the single particle
-   depositing the most energy in it, because CLUE emits a partition and cannot do otherwise.
-   The store keeps the full multi-owner association as a CSR, so what the exclusive rule discards
-   is directly countable: an association (i, a) survives if particle i is also cell a's exclusive
-   owner. The previously quoted figures (83% of associations, 94% of energy) were measured under
-   the superseded per-fragment definition, where most discarded associations were cells shared
-   BETWEEN FRAGMENTS OF ONE SHOWER -- which no longer exist as separate targets.
-
-2. TARGETS SPANNING A SUBSYSTEM BOUNDARY. CLUE clusters one subsystem at a time, so a shower
-   crossing ECAL into HCAL is split by construction and cross-subsystem linking exists to repair
-   it. The fraction of targets affected is what justifies that stage existing at all.
-
-3. TARGET ENERGY COVERAGE. The fraction of calorimeter energy belonging to any target. Its
-   complement is a hard ceiling on every energy-weighted metric and is reported as a limitation.
-
-Isolation is measured separately in `summarise_isolation`, from the scored particle tables rather
-than the store, because `dr_min` is already computed there and there is no reason to recompute it.
-
-Numbers are printed and written to results/<dataset>/truth_geometry.csv so the chapter can cite a
-file rather than a memory.
+Isolation is summarised separately from the scored particle tables, where ``dr_min`` already
+exists. Writes ``truth_geometry.csv`` and ``truth_isolation.csv``.
 """
 
 from __future__ import annotations
@@ -39,7 +22,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from src.config import describe, results_dir, settings, store_expectations, store_path
+from src.config import describe, results_dir, store_expectations, store_path
 from src.io.event_store import EventStore
 from src.plotting import thesis as th
 
@@ -66,10 +49,9 @@ def measure_store(store: EventStore, n_events: int) -> dict[str, float]:
         if record.n_particles == 0 or record.truth_indices.size == 0:
             continue
 
-        # --- 1. exclusive-partition cost -------------------------------------------------
-        # The CSR is particle-major: row i lists the cells particle i deposited in, and
-        # `truth_incidence` is that particle's SHARE of the cell, so its calibrated contribution
-        # is share x E_calib. An association survives the exclusive rule iff the cell's winner is
+        # --- 1. exclusive-partition cost ---
+        # The CSR is particle-major and `truth_incidence` is the particle's share of the cell, so
+        # its contribution is share x E_calib. An association survives iff the cell's winner is
         # this same particle.
         rows = np.repeat(np.arange(record.n_particles), np.diff(record.truth_indptr))
         cols = record.truth_indices
@@ -81,18 +63,16 @@ def measure_store(store: EventStore, n_events: int) -> dict[str, float]:
         energy_total += float(contrib.sum())
         energy_kept += float(contrib[winner].sum())
 
-        # How often the exclusive rule has to make a choice at all: an owned cell with a single
-        # contributor loses nothing to it. Counted over cells that some target owns, since a cell
-        # owned by nobody is not part of the truth partition either way.
+        # How often the rule has to choose at all; counted over cells some target owns, since a
+        # cell owned by nobody is not part of the partition either way.
         contributors = np.bincount(cols, minlength=record.n_hits)
         owned_cells = contributors > 0
         cells_owned_total += int(owned_cells.sum())
         cells_shared_total += int((contributors > 1).sum())
 
-        # --- 2. subsystem spanning, on the EXCLUSIVE partition ---------------------------
-        # The exclusive partition is what both methods are scored against, so the question that
-        # matters is how many of THOSE targets straddle a boundary, not how many of the
-        # multi-owner associations do.
+        # --- 2. subsystem spanning, on the exclusive partition ---
+        # That partition is what both methods are scored against, so it is those targets whose
+        # straddling matters.
         owned = record.truth_label >= 0
         if not owned.any():
             continue
@@ -108,10 +88,8 @@ def measure_store(store: EventStore, n_events: int) -> dict[str, float]:
         per_particle_e = np.bincount(labels, weights=deposit, minlength=record.n_particles)
         present = n_sub > 0
 
-        # Energy OUTSIDE each target's dominant subsystem. This is the quantity a per-subsystem
-        # clusterer actually puts at risk: the majority piece is recoverable within one subsystem,
-        # the remainder can only be reunited with it by the linking stage. It is a much smaller
-        # number than the energy of spanning targets, and the two are easy to confuse.
+        # Energy outside each target's dominant subsystem: what a per-subsystem clusterer puts
+        # at risk, and much smaller than the energy of spanning targets.
         by_sub = np.zeros((record.n_particles, len(SUBSYSTEMS)))
         np.add.at(by_sub, (labels, subs), deposit)
         energy_minority += float((by_sub.sum(axis=1) - by_sub.max(axis=1))[present].sum())
@@ -139,11 +117,11 @@ def measure_store(store: EventStore, n_events: int) -> dict[str, float]:
     }
 
 
-def summarise_isolation(dataset: str) -> pd.DataFrame | None:
-    """Median angular separation to the nearest other target, per pT bin.
+def summarise_isolation() -> pd.DataFrame | None:
+    """Median angular separation to the nearest other target, per pT bin, or None if unscored.
 
-    Read from a scored particle table rather than recomputed: `dr_min` is already there, and the
-    table is one row per (particle, method) so any single method's rows give the truth geometry.
+    Read from a scored particle table rather than recomputed: `dr_min` is already there, and any
+    single method's rows give the truth geometry.
     """
     path = results_dir(create=False) / "particles_maskformer.parquet"
     if not path.exists():
@@ -183,9 +161,8 @@ def main() -> None:
     print(f"\nmeasuring over {min(n, len(store))} events from {store.root}\n")
 
     m = measure_store(store, n)
-    dataset = settings()["dataset"]["active"]
 
-    print("1. EXCLUSIVE TRUTH PARTITION -- what the winner-takes-the-cell rule discards")
+    print("1. Exclusive truth partition: what the winner-takes-the-cell rule discards")
     print(f"   associations retained   {m['assoc_kept_frac']:.4f}   ({m['assoc_total']:,} total)")
     print(f"   target energy retained  {m['energy_kept_frac']:.4f}")
     print(f"   owned cells with >1 contributing target  {m['cells_shared_frac']:.4f}"
@@ -208,7 +185,7 @@ def main() -> None:
     pd.DataFrame([m]).to_csv(out, index=False, float_format="%.6g")
     print(f"\nwrote {out}")
 
-    iso = summarise_isolation(dataset)
+    iso = summarise_isolation()
     if iso is not None:
         print("\n4. TARGET ISOLATION, per truth pT bin")
         print(iso.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
@@ -216,7 +193,7 @@ def main() -> None:
         iso.to_csv(iso_out, index=False, float_format="%.6g")
         print(f"\nwrote {iso_out}")
     else:
-        print("\n4. TARGET ISOLATION -- skipped, no scored particle table")
+        print("\n4. Target isolation: skipped, no scored particle table")
 
 
 if __name__ == "__main__":

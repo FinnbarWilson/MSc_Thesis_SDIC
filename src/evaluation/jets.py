@@ -1,43 +1,14 @@
 """Anti-k_t jets built from clusters, and the same jets built from the truth partition.
 
-WHY JETS, AND WHAT THE REFERENCE IS
+The reference is the truth partition of the same cells, not the generator particles, so the
+reference jets are what a perfect clusterer would produce from this calorimeter under these
+cuts. Comparing against generator jets would fold in zero-suppression, the target selection and
+the sampling resolution, none of which belong to the algorithm under test.
 
-Per-cluster efficiency and purity say how well a method groups cells. They do not say whether the
-error survives into an observable, and jets are where it either does or does not: a cluster that
-loses a shower's halo makes a slightly soft particle candidate, and a jet is a sum of many such
-candidates, so the per-cluster errors can cancel, accumulate, or push a jet across a threshold.
-
-The reference is the TRUTH PARTITION, not the generator particles. For every target particle the
-cells it actually owns are summed into a four-vector and those are clustered -- so the reference
-jets are exactly what a PERFECT clusterer would produce from this calorimeter, given these cells
-and these cuts. Comparing against generator jets instead would fold in three other effects that
-have nothing to do with clustering: zero-suppression, the pt/eta target selection, and the
-calorimeter's own sampling resolution. Those belong to the detector, not to the algorithm under
-test, and including them would flatter both methods equally while hiding the thing being measured.
-
-FOUR-VECTORS FROM CELLS
-
-A calorimeter cell measures energy and position, not momentum. Each cell is therefore treated as a
-massless particle travelling from the interaction point through the cell centre:
-
-    p = E_calib * (x, y, z) / |(x, y, z)|,    E = E_calib
-
-and a cluster's four-vector is the sum over its cells. This is the standard massless-cell
-assumption used to feed calorimeter clusters into jet finding, and it makes the reference and the
-methods commensurate: both are sums over the same cells with the same rule, so any difference in
-the jets comes from WHICH cells were grouped together, which is the question.
-
-CHOICES, AND WHY
-
-anti-k_t at R = 0.4, the LHC default for a ttbar final state: it is infrared and collinear safe,
-and it yields the regular, close-to-circular boundaries that make a jet's area well defined
-(Cacciari, Salam & Soyez). Jets are kept above 25 GeV, which is the usual analysis threshold for
-ttbar and the value this study reports.
-
-Reco jets are matched to reference jets within dR < 0.3, chosen smaller than R so a reco jet
-cannot be equidistant between two adjacent reference jets, and the closest is taken. A reference
-jet with no match inside that cone is a LOST jet; a reco jet matching no reference jet is a FAKE.
-Both are reported, because a method can buy response by splitting one jet into two.
+Each cell is treated as a massless particle from the interaction point through the cell centre,
+``p = E_calib * (x, y, z) / |(x, y, z)|``, and a cluster's four-vector is the sum over its
+cells. Both sides use the same rule, so any difference in the jets comes from which cells were
+grouped together.
 """
 
 from __future__ import annotations
@@ -46,7 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-#: LHC default for ttbar. See the module docstring.
+#: anti-k_t radius: the LHC default for a ttbar final state.
 JET_R = 0.4
 #: Analysis threshold, applied to both the reference and the reconstructed jets.
 JET_MIN_PT = 25.0
@@ -117,9 +88,7 @@ def delta_r(eta1, phi1, eta2, phi2):
 def match(reference: Jets, reco: Jets, max_dr: float = MATCH_DR) -> np.ndarray:
     """For each reference jet, the index of the closest reco jet within `max_dr`, else -1.
 
-    Greedy by reference pt, which is the order `run_antikt` already returns, and a reco jet is
-    consumed once taken. A global assignment would be defensible too, but jets inside a cone this
-    small are rarely contested and greedy-by-pt matches how an analysis would do it.
+    Greedy by reference pt, the order `run_antikt` returns. A reco jet is consumed once taken.
     """
     out = np.full(len(reference), -1, dtype=np.int64)
     if len(reference) == 0 or len(reco) == 0:

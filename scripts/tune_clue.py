@@ -2,18 +2,10 @@
 
     python -m scripts.tune_clue
 
-Writes ``results/<active dataset>/clue_parameters.json``, which
-``scripts.score --algo clue --params`` reads. Tuning runs on a window disjoint from the
-reported events, and :mod:`src.config` refuses to load a configuration where the two overlap
--- tuning CLUE on the events it is reported on would hand it an advantage the MaskFormer does
-not have.
-
-**At pu200, read the range warnings before the result.** The search ranges are calibrated
-against pu0 cell densities, and `rho_c` is a local energy density that pileup moves. Any
-optimum landing in the outer 5% of its log range is reported as a warning, and means the true
-optimum is outside the box: widen that range in `dataset.pu200.overrides.clue.search` and
-re-run rather than reporting the edge. A baseline tuned against the wrong box is under-tuned,
-which is the one way this comparison can be unfair to CLUE.
+Writes ``results/<active dataset>/clue_parameters.json``, which ``scripts.score --algo clue``
+picks up. Read the range warnings before the result: an optimum landing in the outer 5% of its
+log range means the true optimum is outside the box, and a baseline tuned against the wrong box
+is under-tuned.
 """
 
 import argparse
@@ -45,17 +37,17 @@ def main() -> None:
     print(describe())
 
     store = EventStore(args.store or store_path("tune_store"), expect=store_expectations())
-    # Every Optuna trial re-runs the whole pipeline over every record, so they are decoded once
-    # and held. That is the right trade at pu0 and the thing to watch at pu200: the cost is
-    # linear in total cells, not in events, so the hit count is what gets printed.
+    # Every trial re-runs the pipeline over every record, so they are decoded once and held.
+    # The cost is linear in total cells rather than events, which is why the cell count is what
+    # gets printed.
     records = [store[i] for i in range(min(args.events or len(store), len(store)))]
     total_hits = sum(record.n_hits for record in records)
     print(f"tuning on {len(records)} events from {store.root}")
     print(f"  {total_hits:,} cells held in memory ({total_hits / max(len(records), 1):,.0f} per event); "
           f"use --events to cap this")
 
-    # The dataset is recorded in the file, not only in its path, so a parameter set that gets
-    # copied or passed with --params still says which pileup condition it was tuned on.
+    # Recorded in the file, not only in its path, so a copied parameter set still says which
+    # pileup condition it was tuned on.
     result = {
         "dataset": cfg["dataset"]["active"],
         "tune_store": str(store.root),
@@ -63,11 +55,9 @@ def main() -> None:
         "n_tune_events": len(records),
         "subsystems": {},
     }
-    # A subsystem with no cells is SKIPPED, not tuned. `detectors` lists all four because it is
-    # contract-checked against the store's subsystem_order, which is the code's enumeration and
-    # always names four -- but a barrel-only sample (|eta| < 0.88) contains cells in `ecb` and
-    # `hcb` only. Tuning the empty two would spend a full Optuna study each optimising a metric
-    # computed over nothing, and record parameters that read as if they had been measured.
+    # A subsystem with no cells is skipped, not tuned: `detectors` always names four because it
+    # is contract-checked against the store, but a barrel-only sample has cells in two of them,
+    # and tuning the others would record parameters that read as if they had been measured.
     from src.clue.pipeline import SUBSYSTEM_CODE  # noqa: PLC0415
 
     populated, empty = [], []

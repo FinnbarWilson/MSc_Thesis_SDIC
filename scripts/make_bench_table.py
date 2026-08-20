@@ -3,23 +3,12 @@
     python -m scripts.make_bench_table
 
 Reads every ``bench_*.json`` under ``results/<dataset>/``, writes
-``results/<dataset>/timing_summary.csv``, and prints the whole thing as one markdown table
-across both pileup conditions.
+``results/<dataset>/timing_summary.csv`` and prints one markdown table across both conditions.
 
-WHY THROUGHPUT IS THE HEADLINE and latency is quoted beside it. A detector delivers events at
-a rate, so the question "could this keep up" is a throughput question. But a trigger has a
-per-event deadline, and a method whose mean is comfortable while its tail is not will miss it,
-which is what the p95 column is for. Both are computed from the same per-event samples rather
-than from a total elapsed time, so a slow first event cannot be smeared across the rest.
-
-Throughput here is `1 / median latency`: one event at a time, one device, no pipelining. That
-is the honest reading of a batch-1 measurement and it is a LOWER bound on what a served system
-would reach -- batching or overlapping events across CUDA streams would raise it, and neither
-was measured.
-
-The `ms/1000 cells` column is what makes the two pileup conditions comparable. pu0 events carry
-~22k cells and pu200 ~57k, so comparing raw latencies confuses the cost of the method with the
-size of the event.
+Throughput is ``1 / median latency`` for one event on one device with no pipelining, which is
+the reading a batch-1 measurement supports, and a lower bound on a served system. The p95 column is
+there because a trigger has a per-event deadline that a comfortable mean can still miss. The
+``ms/1000 cells`` column is the only one comparable across the two pileup conditions.
 """
 
 import argparse
@@ -54,9 +43,8 @@ def summarise(path: Path) -> dict:
         raise SystemExit(msg)
     order, name, hardware = ROWS[key]
 
-    # Per-pass medians, to show that three passes over the same events agreed. A spread wider
-    # than a few percent means something else was on the machine and the row is not a
-    # measurement of this code.
+    # Per-pass medians: a spread wider than a few percent means something else was on the
+    # machine and the row is not a measurement of this code.
     per_pass = frame.groupby("repeat")["elapsed_ns"].median().to_numpy() / 1e6
     median = float(np.median(elapsed_ms))
 
@@ -104,7 +92,7 @@ def main() -> None:
         for path in sorted((args.results / dataset).glob("bench_*.json")):
             rows.append(summarise(path))
     if not rows:
-        raise SystemExit(f"no bench_*.json under {args.results}/<dataset>/ -- run scripts.bench_clue first")
+        raise SystemExit(f"no bench_*.json under {args.results}/<dataset>/; run scripts.bench_clue first")
 
     table = pd.DataFrame(rows).sort_values(["dataset", "sort_key"]).drop(columns="sort_key")
 

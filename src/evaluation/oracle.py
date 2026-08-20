@@ -1,33 +1,14 @@
-"""The resolution reference, so the reported numbers have something to be measured against.
+"""The resolution reference: a ceiling the reported efficiencies can be read against.
 
-An efficiency of 0.55 is uninterpretable on its own. It could mean the method is poor, or it
-could mean the task is nearly saturated and 0.6 is all anyone gets. A reader otherwise cannot
-tell whether the gap to 1.0 is headroom or physics.
+Feeding the truth partition back in as a prediction scores exactly 1 by construction, so a
+meaningful ceiling has to come from an information constraint instead.
+:func:`resolution_labels` merges target particles whose showers share too much of each other's
+energy to be separable, then clusters the merged set perfectly. Efficiency is ~1 by
+construction, so the number to read is the purity.
 
-Note first why the obvious ceiling is not one. Feeding the truth partition back in as a
-prediction scores exactly 1 by construction -- ``tests/test_scorer_identity.py`` asserts it --
-so "perfect" is trivially achievable and says nothing. A meaningful ceiling has to come from
-an *information* constraint: what could an algorithm achieve that does not get to read the
-truth label off each cell?
-
-An earlier version of this module also built a **geometric** ceiling -- perfect shower axes
-and particle count, every cell assigned to the nearest axis. It was dropped from the analysis
-because it is not a ceiling: it is optimistic in knowing the true count and axes, and it
-bounds only spatial clustering as a class, which is CLUE's class and not MaskFormer's. The
-thesis reports the resolution reference alone.
-
-**Resolution** (:func:`resolution_labels`). Asks how many target particles are physically
-inseparable to begin with. Particles whose showers share the same cells, carrying a large
-fraction of each, are merged into one object; every cell is then
-assigned perfectly within that merged set. Efficiency is ~1 by construction, so the number to
-read is the **purity**, which is a genuine ceiling: no exclusive-partition algorithm can be
-purer than the detector's own granularity allows. Unowned cells -- the sub-threshold deposits
-that are 46% of the calorimeter energy -- are assigned to the nearest merged object rather
-than dropped, because dropping them would hand this reference a contamination advantage that
-neither real method enjoys and quietly inflate the ceiling.
-
-It is scored through :func:`~src.evaluation.metrics.score_event` like any other algorithm, by
-the same code path, so it lands in the same tables and plots on the same axes.
+Unowned cells, the sub-threshold deposits, go to the nearest merged object rather than being
+dropped, so this reference carries the same contamination burden the real methods do. It is
+scored through :func:`~src.evaluation.metrics.score_event` like any other algorithm.
 """
 
 from dataclasses import dataclass
@@ -37,10 +18,9 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-#: Owners per cell considered when measuring which particles overlap. Cells are shared by a
-#: long tail of tiny contributors; keeping the largest few bounds the pair enumeration at
-#: negligible cost to the result, since a contributor outside the top few cannot hold the
-#: `fraction` of itself that :func:`resolution_labels` requires.
+#: Owners per cell considered when measuring overlap. Cells carry a long tail of tiny
+#: contributors, and one outside the top few cannot hold the `fraction` of itself that
+#: :func:`resolution_labels` requires, so this bounds the pair enumeration for free.
 MAX_OWNERS_PER_CELL = 4
 
 
@@ -63,15 +43,9 @@ def _cell_directions(record) -> np.ndarray:
 def _cell_depths(record) -> np.ndarray:
     """Fractional depth of each cell, in [0, 1] across the event's radial extent.
 
-    Distance from the interaction point is the depth coordinate, rather than a layer index.
-    A layer means a different physical thickness in each subsystem -- 5.05 mm in ECAL against
-    51 mm in HCAL -- so one step of layer index is not one step of depth, and a metric built
-    on the index would be ten times more permissive in one subsystem than the other. Distance
-    is the same quantity everywhere and needs no per-subsystem bookkeeping.
-
-    That it is not "depth into the calorimeter" for an endcap cell does not matter here: the
-    coordinate is only ever compared between cells at similar angles, where the difference in
-    distance from the origin *is* the difference in depth along the shower axis.
+    Distance from the interaction point rather than a layer index, because a layer is 5.05 mm
+    in ECAL and 51 mm in HCAL and an index-based metric would be ten times more permissive in
+    one than the other.
     """
     radius = np.linalg.norm(np.stack([record.x, record.y, record.z], axis=1).astype(np.float64), axis=1)
     if radius.size == 0:
@@ -83,9 +57,8 @@ def _cell_depths(record) -> np.ndarray:
 def _multiowner_entries(record) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Flatten the multi-owner CSR into ``(particle, cell, calibrated energy)`` triples.
 
-    The *multi-owner* truth is used rather than the exclusive partition on purpose. Overlap
-    is the whole question here, and the exclusive partition has already thrown it away by
-    handing each cell to a single winner.
+    The multi-owner truth, not the exclusive partition: overlap is the question here, and the
+    partition has already discarded it.
     """
     counts = np.diff(record.truth_indptr)
     rows = np.repeat(np.arange(record.n_particles), counts)
@@ -98,9 +71,9 @@ def _multiowner_entries(record) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def particle_geometry(record) -> ParticleGeometry:
     """True shower axis and deposited energy per particle, from the multi-owner truth.
 
-    The direction is the deposit-weighted mean of the cell unit vectors, renormalised. Doing
-    it on vectors rather than by averaging eta and phi is what keeps a shower straddling
-    ``phi = +/-pi`` from being handed a direction on the opposite side of the detector.
+    The direction is the deposit-weighted mean of the cell unit vectors, renormalised.
+    Averaging vectors rather than eta and phi is what keeps a shower straddling ``phi = +/-pi``
+    from being handed a direction on the opposite side of the detector.
     """
     n = int(record.n_particles)
     if n == 0:
@@ -118,8 +91,8 @@ def particle_geometry(record) -> ParticleGeometry:
     depth = np.divide(depth, total, out=np.zeros(n), where=total > 0)
 
     norm = np.linalg.norm(accum, axis=1, keepdims=True)
-    # A particle with no recorded deposit gets an arbitrary but finite direction; it owns no
-    # cell, so nothing is ever assigned to it and the choice cannot affect any metric.
+    # A particle with no deposit gets an arbitrary finite direction; it owns no cell, so
+    # nothing is assigned to it and the choice cannot affect any metric.
     direction = np.where(norm > 1e-12, accum / np.maximum(norm, 1e-12), np.array([0.0, 0.0, 1.0]))
     return ParticleGeometry(energy=total, direction=direction, depth=depth)
 
@@ -127,10 +100,8 @@ def particle_geometry(record) -> ParticleGeometry:
 def unresolvable_groups(record, fraction: float = 0.5) -> np.ndarray:
     """Group truth particles that share too much of each other's energy to be separable.
 
-    Two particles are joined when the energy they deposit *in the same cells* is at least
-    `fraction` of the smaller one's total. The shared energy of a pair is taken as
-    ``sum_i min(E_ia, E_ib)``, which is the part of the two showers that genuinely coincides
-    rather than merely the cells they both touch.
+    Two particles are joined when the energy they deposit in the same cells, taken as
+    ``sum_i min(E_ia, E_ib)``, is at least `fraction` of the smaller one's total.
 
     Args:
         record: an :class:`~src.io.event_store.EventRecord`.
@@ -198,10 +169,11 @@ def unresolvable_groups(record, fraction: float = 0.5) -> np.ndarray:
 def resolution_labels(record, fraction: float = 0.5) -> tuple[np.ndarray, int]:
     """Perfect clustering of a truth set from which inseparable particles have been merged.
 
-    Owned cells go to their particle's group. Unowned cells -- real deposits from particles
-    below the pT cut -- go to the nearest group axis, so this reference carries the same
-    contamination burden the real methods do and its purity is a ceiling rather than a
-    flattering artefact.
+    Owned cells go to their particle's group; unowned cells go to the nearest group axis, so
+    this reference carries the same contamination burden the real methods do.
+
+    Returns:
+        ``(label, n_groups)`` with -1 where the event has no particles.
     """
     groups = unresolvable_groups(record, fraction)
     n = int(record.n_particles)

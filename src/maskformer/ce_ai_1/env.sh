@@ -1,24 +1,12 @@
 # Shared environment for the ce-ai-1 runs. Sourced by the scripts beside it, not run directly.
 #
-# WHY THESE SCRIPTS ARE NOT IN hepattn_colliderml/
+# These launchers sit outside hepattn_colliderml/ deliberately: that directory is a verbatim
+# mirror of the hepattn checkout, checked by verify_sync.sh, and a machine-specific script of mine
+# in it would make that check fail against any clean upstream.
 #
-# Everything under hepattn_colliderml/ is a verbatim mirror of the hepattn checkout and is checked
-# by verify_sync.sh. These are machine-specific launchers for ce-ai-1 and are mine, not upstream's,
-# so putting them in the mirror would make verify_sync.sh fail against any clean checkout. They
-# address the checkout the same way the slurm scripts do.
-#
-# WHAT CHANGED MOVING OFF DIAS
-#
-#   DIAS (old)                                  ce-ai-1 (here)
-#   Slurm: sbatch, walltime caps, queueing      run it directly; nohup for long runs
-#   RHEL7 glibc 2.17 -> apptainer container     Ubuntu 24.04, glibc 2.39: no container
-#   pixi env inside the container               plain venv, system python 3.12
-#   3 GPUs, one with 818 uncorrected ECC        one A100 80GB, healthy: no ECC preflight
-#   --mem=128G                                  1.5 TB RAM: the host-memory ceiling is gone
-#   $HOME had room                              / has ~100 GB free: everything is on the datastore
-#
-# The DIAS launchers themselves were deleted on 2026-08-12; `git log -- src/maskformer/dias/`
-# recovers them. This table is kept because it is the record of what the move actually forced.
+# The counterpart to dias/env.sh. ce-ai-1 needs no container (Ubuntu 24.04, glibc 2.39), has no
+# scheduler, and has one healthy A100 80 GB, so none of the DIAS workarounds apply here. What it
+# does not have is disk: everything lives on the datastore rather than in $HOME.
 
 # One place defines where things live, and it is not this file.
 # shellcheck disable=SC1091
@@ -30,7 +18,7 @@ PYTHON="$VENV_TRAIN/bin/python"
 # Re-sync the mirrored subtree into the checkout on every run.
 #
 # This is not tidiness, it is a correctness trap that has already bitten once. main.py runs from
-# the CHECKOUT, which holds copies made at install time -- so editing
+# the checkout, which holds copies made at install time, so editing
 # src/maskformer/hepattn_colliderml/configs/pu0.yaml in the repository and launching a run
 # silently uses the stale copy. The symptom is a config change that appears to do nothing
 # (observed: max_epochs edited to 9, --print_config still reporting 3). The repository is the
@@ -61,7 +49,7 @@ ulimit -n 65536 2>/dev/null || true
 # pu200 runs the card hot: the benchmark peaked at 68,456 MiB of 81,037, i.e. 84% with ~12 GiB
 # spare. Event sizes vary a lot (measured 117k hits/event mean against a 151k max, +29%), and the
 # sequence length changes every step, so the allocator sees a different shape each time and
-# fragments -- the failure mode is an OOM on a busy event hours in, with plenty of free memory that
+# fragments. The failure mode is an OOM on a busy event hours in, with plenty of free memory that
 # is in the wrong-sized blocks. expandable_segments lets it grow segments instead of hoarding
 # fixed-size ones. If a long run still OOMs, drop num_queries to 400 (measured max targets: 368)
 # before touching anything else.
@@ -77,7 +65,7 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 export TORCH_COMPILE_DISABLE
 
 # Sanity: the GPU here is a single MIG 7g.80gb instance, which is the whole card. Nothing to select
-# between, so no CUDA_VISIBLE_DEVICES juggling and no ECC preflight -- both existed on DIAS only
+# between, so no CUDA_VISIBLE_DEVICES juggling and no ECC preflight; both existed on DIAS only
 # because one of its three cards was faulty.
 
 sample_gpu_peak() {

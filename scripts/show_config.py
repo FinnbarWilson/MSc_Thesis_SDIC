@@ -1,16 +1,11 @@
-"""Print what the active dataset actually resolved to, and stop.
+"""Print what the active dataset resolved to, and stop.
 
-    python -m scripts.show_config
-    python -m scripts.show_config --full
+    python -m scripts.show_config [--full]
 
-The experiment definition has one implicit step in it: the active dataset's ``overrides``
-block is deep-merged over everything else before any consumer sees the settings. That is
-what makes switching pileup condition a one-line edit, and it is also the one thing in the
-config that cannot be checked by reading the file. This prints the result, so "which value is
-this run using" is a command rather than a deduction.
-
-It opens no store and imports no CLUEstering, so it works before either dataset is dumped and
-is the first thing to run when a path looks wrong.
+The active dataset's ``overrides`` block is deep-merged over everything else before any
+consumer sees the settings, and this is the one step in the config that cannot be checked by
+reading the file. Opens no store and imports no CLUEstering, so it works before either dataset
+is dumped.
 """
 
 import argparse
@@ -40,7 +35,7 @@ def main() -> None:
           f"backend {cfg['clue']['backend']!r}")
 
     # The search ranges are the values most likely to be wrong on a new dataset, and the most
-    # tedious to confirm by eye through two levels of YAML nesting, so they are printed in full.
+    # tedious to confirm through two levels of YAML nesting, so they are printed in full.
     print("  clue search ranges")
     for subsystem in cfg["detectors"]:
         ranges = config.clue_search(subsystem)

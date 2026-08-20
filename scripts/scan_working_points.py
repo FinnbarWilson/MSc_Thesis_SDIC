@@ -1,19 +1,11 @@
-"""Trace each method's purity/efficiency curve over its working points.
-
-Reporting a single working point is misleading here: the two methods cross at almost exactly
-the 0.5 recovery threshold, so which one "wins" is decided by where the threshold is put
-rather than by either algorithm. The curve is the honest comparison.
-
-The two knobs are not the same kind of thing. MaskFormer's working point is post-hoc -- the
-store keeps its masks down to a probability of 0.02, so any (mask, object) threshold above
-that is re-derived offline with no GPU. CLUE's is not: every point needs the algorithm run
-again, so the scan is over `rho_c`, the density threshold, which is what actually trades its
-efficiency against its purity.
-
-Runs on a subset of events by default; the curve's shape is stable well before 500 events
-and each CLUE point costs a full re-clustering.
+"""Trace each method's purity/efficiency frontier over its working points.
 
     python -m scripts.scan_working_points --events 100
+
+A single working point is misleading when the two methods cross near the reporting threshold;
+the curve is the comparison to report. The two knobs differ in cost: MaskFormer's thresholds are
+post-hoc and re-derived offline, while every CLUE point needs a full re-clustering, so the scan
+runs on a subset of events by default. Writes ``wp_scan.parquet``.
 """
 
 import argparse
@@ -27,12 +19,9 @@ from src.config import describe, results_dir, settings, store_expectations, stor
 from src.evaluation.metrics import score_event
 from src.io.event_store import EventStore
 
-#: CLUE's density threshold is scanned as a MULTIPLE of its tuned value rather than over an
-#: absolute grid, so the scan follows the tuning instead of having to be re-chosen with it --
-#: which matters at pu200, where the tuned `rho_c` is expected to land somewhere else entirely.
-#: The MaskFormer grids are `maskformer.mask_scan` / `object_scan` in config/experiment.yaml,
-#: read from there rather than restated here: they were duplicated once, drifted, and the scan
-#: silently reported a different grid from the one the config documents.
+#: CLUE's density threshold is scanned as a multiple of its tuned value rather than over an
+#: absolute grid, so the scan follows the tuning rather than having to be re-chosen with it. The
+#: MaskFormer grids are read from `maskformer.mask_scan` / `object_scan` in the config.
 RHO_SCALES = (0.25, 0.5, 1.0, 2.0, 4.0)
 
 
@@ -53,10 +42,9 @@ def summarise(particles, clusters, algo, wp, **extra) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--events", type=int, default=100)
-    # SELECTING a working point must happen on the tune window, not on the scored one. The scan
-    # defaults to the scored store because its usual job is to show the shape of the frontier the
-    # reported point sits on; pass --store tune_store when the question is "which point should we
-    # use", so the answer is not read off the events the answer will be reported on.
+    # Defaults to the scored store, since the usual job is to show the frontier the reported
+    # point sits on. Pass --store tune_store to SELECT a working point, so it is not chosen on
+    # the events it will be reported over.
     parser.add_argument("--store", choices=["store", "tune_store"], default="store")
     parser.add_argument("--params", type=Path, default=None,
                         help="defaults to results/<active dataset>/clue_parameters.json")

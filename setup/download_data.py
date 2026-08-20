@@ -5,19 +5,12 @@
     python setup/download_data.py --pileup pu0 --shards 20
     COLLIDERML_DATA=/somewhere/else python setup/download_data.py
 
-The default is 100 shards of ttbar_pu200 -- 100 events each, so 10,000 events, about 297 GB
-(219 GB calo_hits + 78 GB particles). That is the window budget in
-src/maskformer/hepattn_colliderml/configs/pu200.yaml.
+The default is ~297 GB and is resumable; re-running skips what is already complete. The two
+collections are downloaded under matching filenames because ``ColliderMLDataset`` pairs a
+particles shard with the calo_hits shard of the same name and takes the intersection of the two
+listings, so an unmatched shard is dropped silently. ``setup/verify_data.py`` checks for that.
 
-The two collections are downloaded under matching filenames on purpose: ColliderMLDataset pairs a
-particles shard with the calo_hits shard of the SAME NAME and uses the intersection of the two
-directory listings, so a shard present in one and missing from the other is dropped silently --
-the event count just comes out lower with no error. `setup/verify_data.py` checks exactly that.
-
-Resumable: re-running skips what is already complete.
-
-Needs `huggingface_hub`, which is in the analysis env (setup/install_analysis_env.sh) -- or
-`pip install huggingface_hub` anywhere, since this script imports nothing else.
+Needs `huggingface_hub` and nothing else.
 """
 
 from __future__ import annotations
@@ -31,23 +24,21 @@ from huggingface_hub import snapshot_download
 REPO = "CERN/ColliderML-Release-1"
 TOTAL_SHARDS = 1000  # the "-of-01000" in every filename
 
-# Rows per shard, which is events per shard -- and it is NOT the same for the two pileup
+# Rows per shard, which is events per shard, and is not the same for the two pileup
 # conditions. Read from the parquet footers on the Hub rather than assumed:
 #
 #   ttbar_pu0    1,000 rows/shard  ->  1,000,000 events in the release,  ~1.06 GB/shard
 #   ttbar_pu200    100 rows/shard  ->    100,000 events in the release,  ~2.97 GB/shard
 #
-# pu0 packs 10x more events into a shard of a third the size, because a pu0 event holds ~22k
-# calo hits against pu200's ~532k. This used to be a single constant of 100, taken from pu200,
-# which made the printed event count wrong by 10x for any pu0 download -- 100 shards of pu0 is
-# 100,000 events, not 10,000. Nothing else consumed it, so the effect was a misleading log line
-# rather than a wrong download, but that line is what anyone sizing a download reads.
+# pu0 packs 10x more events into a shard of a third the size, a pu0 event holding ~22k calo hits
+# against pu200's ~532k. One constant for both would misreport the event count by 10x, which is
+# the line anyone sizing a download reads.
 EVENTS_PER_SHARD: dict[str, int] = {"pu0": 1000, "pu200": 100}
 COLLECTIONS = ("calo_hits", "particles")
 
 
 def main() -> None:
-    default_root = os.environ.get("COLLIDERML_DATA", "/mnt/ai-datastore/finnbar/ColliderML_data")
+    default_root = os.environ.get("COLLIDERML_DATA", "external/ColliderML_data")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pileup", default="pu200", choices=["pu0", "pu200"])
     p.add_argument("--event-type", default="ttbar")

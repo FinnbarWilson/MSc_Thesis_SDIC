@@ -1,41 +1,13 @@
-"""Per-object metrics, pooled into long tables.
+"""Per-object metrics, emitted as long tables.
 
-Aggregate numbers hide the result. An overall efficiency of 0.37 is an average dominated by
-marginal particles sitting on the pT cut; "we reconstruct X% of particles above 5 GeV, and
-the failures are merges in jet cores, versus CLUE's Y%" is a statement about physics. Both
-come from the same model. So nothing here reduces anything: :func:`score_event` emits one
-row per truth particle and one row per predicted cluster, and every aggregate in the thesis
-is a later selection over those tables.
+:func:`score_event` writes one row per truth particle and one per predicted cluster; every
+aggregate in the report is a later selection over those tables.
 
-Metrics come in hit-counted and energy-weighted forms. **The energy-weighted ones are
-primary**: cell energies span orders of magnitude, and a hit count treats a 1 MeV cell the
-same as a 1 GeV one, which is not how a calorimeter works. Energies are calibrated per cell
-by subsystem before anything is summed, because ECAL and HCAL are calibrated differently
-(37.5/38.7 against 45.0/46.9) and the factor does not cancel in a ratio.
-
-That rule now applies to splitting and merging too, which it previously did not: `n_frag` and
-`n_owners` were hit-counted alone while everything around them was energy-weighted. The
-measured consequence is worth stating precisely, because it is not the one you would guess.
-Merging barely moves -- CLUE's merge rate is the same under both weightings, and MaskFormer's
-is *higher* under energy, not lower. **Splitting inverts.** Above ~8 GeV MaskFormer's
-hit-counted split rate falls with energy (0.36 to 0.16) while its energy-weighted split rate
-rises (to 0.53), so the two definitions support opposite conclusions about whether the model
-fragments energetic particles more or less. The hit-counted fall is the `n_frag` blind spot
-below biting hardest exactly where the fragmentation is worst.
-
-Both weightings are computed and written out -- `_e` suffixed columns are the energy ones and
-the ones to report -- so the brief's quoted working points stay reproducible without being
-what the figures show.
-
-Efficiency is taken per truth particle rather than per cluster, so a particle merged into a
-neighbour counts as a miss instead of vanishing from the denominator, and metrics are pooled
-over events rather than averaged per event, so every particle carries the same weight
-regardless of how busy its event was.
-
-None of these numbers can be read without knowing what the task allows, and 1.0 is not it.
-:mod:`src.evaluation.oracle` builds two reference clusterings that go through this same
-scorer; the efficiency reference lands near 0.5 and the purity ceiling near 0.5, so a method
-scoring 0.31 is at roughly 60% of what is available rather than 31% of it.
+Metrics come in hit-counted and energy-weighted forms, and the ``_e`` suffixed energy ones are
+primary: cell energies span orders of magnitude, and energies are calibrated per subsystem
+before anything is summed. Efficiency is taken per truth particle rather than per cluster, so a
+particle merged into a neighbour counts as a miss instead of leaving the denominator, and rows
+are pooled over events rather than averaged per event.
 """
 
 from collections.abc import Mapping, Sequence
@@ -74,13 +46,8 @@ def delta_phi(first: np.ndarray, second: np.ndarray) -> np.ndarray:
 def local_density(eta: np.ndarray, phi: np.ndarray, radius: float = 0.2) -> tuple[np.ndarray, np.ndarray]:
     """How crowded each particle's neighbourhood is.
 
-    This is the variable that separates "isolated particle" from "inside a jet core", and it
-    is where the two algorithms should diverge most: a topocluster merges nearby showers by
-    construction, so its purity should fall away with density in a way a per-particle model's
-    need not.
-
     Directions come from the particles' generator momenta rather than their shower centroids,
-    so the variable is a property of the event and not of either algorithm's output.
+    so this is a property of the event and not of either algorithm's output.
 
     Returns:
         ``(dr_min, n_within)``: distance to the nearest other target particle (``inf`` when
@@ -124,14 +91,14 @@ def score_event(
             totals. See :func:`~src.evaluation.matching.hungarian_match`.
 
     Returns:
-        ``(particles, clusters, event)`` -- one row per truth particle, one row per
-        predicted cluster, and one summary dictionary.
+        ``(particles, clusters, event)``: one row per truth particle, one row per predicted
+        cluster, and one summary dictionary.
     """
     n_truth = int(record.n_particles)
     truth_label = record.truth_label
     pred_label = np.asarray(pred_label)
 
-    # E_ia, calibrated: the energy this particular particle put in this particular cell.
+    # E_ia, calibrated: the energy this particle put in this cell.
     deposit = record.truth_deposit * record.calibration[record.subsystem]
     cell_calib = record.energy_calib
 
@@ -146,8 +113,8 @@ def score_event(
     pred_total_e = np.bincount(pred_label[clustered], weights=cell_calib[clustered], minlength=n_pred)
     pred_total_raw = np.bincount(pred_label[clustered], weights=record.energy[clustered], minlength=n_pred)
 
-    # Matched on calibrated energy overlap: the pairing should be driven by where the energy
-    # went, not by how many low-energy cells happened to coincide.
+    # Matched on calibrated energy overlap, so the pairing follows where the energy went
+    # rather than how many low-energy cells coincided.
     match = hungarian_match(
         overlap_e,
         min_overlap=min_overlap,
@@ -156,25 +123,16 @@ def score_event(
         min_overlap_frac=min_overlap_frac,
     )
 
-    # Split and merge, in both weightings. The hit-counted pair is the brief's definition and
-    # is kept so the quoted working points stay comparable; the energy pair is the one to
-    # report, for the same reason energy-weighted efficiency is primary. The gap between them
-    # is not cosmetic and it falls almost entirely on splitting: above ~8 GeV the two
-    # definitions disagree on the SIGN of MaskFormer's trend with energy. See the module
-    # docstring, and figures/<dataset>/weighting_comparison for the measured difference.
+    # Split and merge in both weightings; the energy pair is the one reported.
     n_frag = fragmentation(overlap_n, truth_total_n, split_fraction)
     n_owners = contamination(overlap_n, truth_total_n, split_fraction)
     n_frag_e = fragmentation(overlap_e, truth_total_e, split_fraction)
     n_owners_e = contamination(overlap_e, truth_total_e, split_fraction)
 
-    # Both `n_frag` forms share a blind spot worth knowing about: a particle spread over more
-    # than 1/split_fraction clusters gives no single cluster a large enough share, so it
-    # counts as *zero* fragments and is not flagged as split. 57% of particles here have
-    # more than ten cells, so that is not a corner case, and it understates splitting for
-    # precisely the algorithms that fragment most.
-    #
-    # `frag_frac` -- the share of the particle that is NOT in its largest piece -- has no
-    # such blind spot and is continuous, so it is the one to plot.
+    # Both `n_frag` forms have a blind spot: a particle spread over more than 1/split_fraction
+    # clusters gives no cluster a large enough share, so it counts as zero fragments and is not
+    # flagged as split. `frag_frac`, the share outside the largest piece, has no such blind spot
+    # and is the one plotted.
     n_touched = (overlap_e > 0).sum(axis=1).astype(np.int32) if overlap_e.size else np.zeros(n_truth, dtype=np.int32)
     best_piece = overlap_e.max(axis=1) if overlap_e.size else np.zeros(n_truth)
     frag_frac = 1.0 - _safe_div(best_piece, truth_total_e)
@@ -199,10 +157,8 @@ def score_event(
         e_reco[t] = pred_total_e[c]
         e_matched[t] = overlap_e[t, c]
 
-    # Where a particle's energy went when it did not reach its matched cluster: cells no
-    # cluster claimed, versus cells another cluster took. Those are different failures with
-    # different fixes -- a density threshold against genuine mis-clustering -- so they are
-    # kept apart rather than lumped into "inefficiency".
+    # Where a particle's energy went when it missed its matched cluster: cells no cluster
+    # claimed, against cells another cluster took. Different failures, kept apart.
     lost = owned & ~clustered
     e_lost_noise = np.bincount(truth_label[lost], weights=deposit[lost], minlength=n_truth)
     e_lost_other = np.maximum(truth_total_e - e_matched - e_lost_noise, 0.0)
@@ -232,11 +188,9 @@ def score_event(
         "pur_n": pur_n,
         "pur_e": pur_e,
         "e_reco_calib": e_reco,
-        # Two responses, because the usual one answers a different question than it looks
-        # like it does. `response` divides the WHOLE matched cluster by the particle's
-        # deposit, so a cluster that merged three particles reports ~3 -- it is as much a
-        # contamination measure as an energy-scale one. `response_matched` divides only the
-        # shared part, so it is bounded by 1 and is the pure energy-recovery statement.
+        # `response` divides the whole matched cluster by the particle's deposit, so
+        # contamination raises it above 1; `response_matched` divides only the shared part and
+        # is bounded by 1.
         "response": _safe_div(e_reco, truth_total_e),
         "response_matched": _safe_div(e_matched, truth_total_e),
         "n_frag": n_frag,
@@ -264,9 +218,8 @@ def score_event(
         c_eff_n[c] = _safe_div(overlap_n[t, c], truth_total_n[t])
         c_eff_e[c] = _safe_div(overlap_e[t, c], truth_total_e[t])
 
-    # Energy from cells belonging to no target particle. These are not detector noise: they
-    # are real deposits from particles below the pT cut. They count against purity and never
-    # against efficiency, identically for both algorithms.
+    # Cells belonging to no target: real deposits from particles below the pT cut, not noise.
+    # They count against purity and never against efficiency, identically for both methods.
     unowned = clustered & ~owned
     e_unowned = np.bincount(pred_label[unowned], weights=cell_calib[unowned], minlength=n_pred)
 

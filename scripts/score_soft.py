@@ -1,24 +1,13 @@
-"""The multi-owner capability study: score both methods with fractional cell ownership.
+"""Score both methods with fractional cell ownership on both sides.
 
-The head-to-head in ``scripts.score`` collapses MaskFormer's overlapping masks to one winner
-per cell, so CLUE has something it can express. This script does not, and scores both methods
-against the multi-owner truth with ownership left fractional.
+    python -m scripts.score_soft [--limit 50]
 
-The point is not to arrange an even fight. It is that the exclusive metric suppresses a
-capability one method has, and a metric that does that is measuring the format rather than the
-clustering. Nothing here favours the model either: prediction weights are normalised per cell,
-so a method whose clusters never overlap passes through with every weight equal to 1, and CLUE
-is scored by identical code with no special case.
-
-Expect CLUE's efficiency to be *lower* here than in the head-to-head, and do not read that as
-the metric penalising it. The denominator has changed from "energy in cells this particle
-dominates" -- a target defined by what a partition can express -- to the particle's actual
-deposited energy, which neither method's output can move. Scoring the truth partition itself
-under this metric gives exactly `exclusive_share` rather than 1, so that shortfall is a
-property of the algorithm class, and measuring it is the whole purpose.
-
-    python -m scripts.score_soft
-    python -m scripts.score_soft --limit 50
+`scripts.score` collapses overlapping masks to one winner per cell so CLUE has something it can
+express; this does not. Prediction weights are normalised per cell, so a partitioning method
+passes through with every weight equal to 1 and is scored by identical code. Expect its
+efficiency to be lower here than in the head-to-head: the denominator has changed to the
+particle's actual deposited energy. See :mod:`src.evaluation.soft`. Writes
+``capability_summary.csv``.
 """
 
 import argparse
@@ -27,11 +16,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from scripts.score import DEFAULT_CLUE_PARAMS
 from src.clue.pipeline import SUBSYSTEMS, cluster_event
 from src.config import describe, results_dir, settings, store_expectations, store_path
 from src.evaluation.soft import capability_summary, hard_weights, score_event_soft, sharing_diagnostics
 from src.io.event_store import EventStore
-from scripts.score import DEFAULT_CLUE_PARAMS
 
 
 def main() -> None:
@@ -54,13 +43,11 @@ def main() -> None:
         tuned = json.loads(params_path.read_text())["subsystems"]
         clue_params = {name: entry["parameters"] for name, entry in tuned.items()}
     else:
-        clue_params = {name: DEFAULT_CLUE_PARAMS for name in SUBSYSTEMS}
+        clue_params = dict.fromkeys(SUBSYSTEMS, DEFAULT_CLUE_PARAMS)
         print(f"  clue params  UNTUNED defaults (no {params_path})")
 
-    # `maskformer` divides a contested cell in proportion to MASK probabilities, and the measured
-    # symptom is that it over-divides: 1.303 claims per cell against truth's 1.074. CLUE, being an
-    # exclusive partition, is pinned at exactly 1 and cannot represent an overlap at all. That
-    # contrast is what this study measures.
+    # MaskFormer divides a contested cell in proportion to mask probabilities; CLUE, being an
+    # exclusive partition, is pinned at one claim per cell. That contrast is what is measured.
     algos = ["maskformer", "clue"]
 
     frames: dict[str, list] = {name: [] for name in algos}

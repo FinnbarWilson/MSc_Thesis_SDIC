@@ -3,30 +3,20 @@
 #
 #   ./setup/install_training_env.sh
 #
-# Everything lands in external/ (gitignored). Nothing is written outside the repository except
-# the dataset, which setup/download_data.py fetches separately.
-#
-# This is the scripted form of the three manual steps in src/maskformer/README.md -- clone
-# hepattn, apply hepattn-changes.patch, copy hepattn_colliderml/ over the experiment directory.
-# hepattn is cloned rather than vendored because src/maskformer/README.md makes that an explicit
-# authorship decision; "clone the repo and run this script" is still self-contained.
+# The scripted form of the three steps in src/maskformer/README.md: clone hepattn, apply
+# hepattn-changes.patch, copy hepattn_colliderml/ over the experiment directory. hepattn is
+# cloned rather than vendored, which is an authorship decision that README explains. Everything
+# lands in external/.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$HERE/paths.sh"
 
-# THE PINNED COMMIT, AND WHY IT IS NOT THE ONE IN src/maskformer/README.md
-#
-# That file names 30ccb9f as the reference commit. It no longer exists upstream -- a fresh clone
-# reports "fatal: Not a valid object name", so it was rebased or squashed away and the pin is
-# no longer reproducible for anyone cloning today. cb4fb10 "Add ColliderML Experiment (#231)" is
-# the surviving commit that introduces the experiment this thesis uses, and
-# hepattn-changes.patch applies to it cleanly (checked against main, cb4fb10, 1df05cc and
-# 93b2842 -- it applies to all four, so this is the most specific choice, not the only one).
-#
-# If reproducibility of the ORIGINAL pu0 checkpoint matters more than convenience, the honest fix
-# is to vendor the tree: upstream can delete a commit again, and it already has once.
+# cb4fb10 "Add ColliderML Experiment" is the surviving upstream commit introducing the
+# experiment this work uses, and hepattn-changes.patch applies to it cleanly. An earlier
+# reference commit was rebased away upstream, so vendor the tree if the
+# original checkpoint's provenance ever matters more than convenience.
 COMMIT="${HEPATTN_COMMIT:-cb4fb10}"
 
 echo "=== [1/5] venv at $VENV_TRAIN (python 3.12, which hepattn pins with ==) ==="
@@ -85,7 +75,7 @@ echo "=== [5/5] hepattn and its dependencies ==="
 "$VENV_TRAIN/bin/pip" install -q cmake ninja pybind11 scikit-build-core
 # --ignore-requires-python is not optional here, and it is not papering over a real conflict.
 # hepattn's pyproject declares `requires-python = "== 3.12"`. Under PEP 440 `== 3.12` means
-# exactly 3.12.0, not the 3.12 series -- expressing "any 3.12" needs `== 3.12.*`. So pip refuses
+# exactly 3.12.0, not the 3.12 series; expressing "any 3.12" needs `== 3.12.*`. So pip refuses
 # every patch release, including the 3.12.3 that Ubuntu 24.04 ships:
 #     ERROR: Package 'hepattn' requires a different Python: 3.12.3 not in '==3.12'
 # Upstream does not hit this because pixi resolves the interpreter itself rather than going
@@ -93,7 +83,7 @@ echo "=== [5/5] hepattn and its dependencies ==="
 "$VENV_TRAIN/bin/pip" install -e "$HEPATTN" --no-build-isolation --ignore-requires-python 2>&1 | tail -5
 # flash-attn is required, not optional: both configs set attn_type: flash-varlen.
 "$VENV_TRAIN/bin/pip" install -q "flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.17/flash_attn-2.8.3%2Bcu128torch2.9-cp312-cp312-linux_x86_64.whl" \
-    || echo "!!! flash-attn wheel failed -- attn_type: flash-varlen will not run"
+    || echo "!!! flash-attn wheel failed; attn_type: flash-varlen will not run"
 
 echo
 echo "=== summary ==="

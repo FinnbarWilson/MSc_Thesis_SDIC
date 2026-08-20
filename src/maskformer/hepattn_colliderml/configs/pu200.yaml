@@ -1,60 +1,48 @@
-# ColliderML calorimeter clustering -- pileup 200, barrel only.
+# ColliderML calorimeter clustering: pileup 200, barrel only (|eta| <= 0.88).
 #
 #   cd <hepattn checkout>/src/hepattn/experiments/colliderml
 #   python main.py fit --config configs/pu200.yaml
 #
-# SELF-CONTAINED. There are exactly two configs in this directory, one per pileup condition, and
-# neither is an overlay on the other. That is deliberate: the overlay stack that used to live here
-# meant the objective a run actually used depended on the ORDER of four --config flags, and
-# `tasks` is a YAML list, so any overlay touching it silently replaced the whole list rather than
-# merging into it. One file per run removes that class of mistake entirely.
+# Self-contained, and not an overlay on pu0.yaml: see that file's header for why. The two are
+# identical except where the data forces a difference, marked "PU0 DIFFERS" / "PU200 DIFFERS".
 #
-# The two files are identical except where the data forces a difference, and those places are
-# marked "PU200 DIFFERS" / "PU0 DIFFERS". Keep them in sync by hand; a diff of the two is short
-# and is the intended way to see what pileup changes.
+# The barrel cut is what makes this fit on one card. MaskFormer's memory is driven by
+# num_queries x num_hits, and a faithful pileup-200 event is about 200x the pileup-0 footprint --
+# two orders of magnitude past an 80 GB A100 rather than a tuning problem. Cells and particles
+# are cut together, since cutting either alone would leave targets with no cells or cells with
+# no target. Every pileup-200 number in this work describes this cut only.
 #
-# THE TRUTH DEFINITION IS SHOWER-LEVEL. `particle_collapse_shower_secondaries: true` makes one
-# target per particle ENTERING the calorimeter rather than per Geant particle depositing in it.
-# See config/experiment.yaml under `particle_selection` for the measurements behind it. Results
-# produced before 2026-08-11 used the other definition and are not comparable.
-#
-# THIS FILE IS CURRENTLY A COPY OF pu0.yaml IN EVERYTHING EXCEPT THE DATA. The objective, the
-# architecture and the schedule are pu0's, unmeasured here -- pu200 has not been run under
-# shower-level truth. In particular `max_epochs` is NOT sized for this box at this query count:
-# launch, watch ~300 steps, set it from the measured rate, and relaunch. OneCycleLR is sized from
-# total steps and cannot be resized mid-run.
+# The truth definition is shower-level, the same as pu0, which is what makes the two columns
+# comparable at all.
 
-# See pu0.yaml for why this key must exist. PU0 DIFFERS: ColliderML_pu0.
+# The Comet experiment name and the log directory name; hepattn's CLI links both to it, and
+# without this key every run is logged as "hepattn". PU0 DIFFERS.
 name: ColliderML_pu200
 
 seed_everything: 42
 
 data:
-  # 100 shards of 100 events each, 10,000 events from 297 GB.
-  train_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
-  val_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
-  test_dir: /mnt/ai-datastore/finnbar/ColliderML_data/ttbar_pu200/
+  # Overridden by the launchers from DATA_DIR; setup/download_data.py puts the shards here.
+  train_dir: external/ColliderML_data/ttbar_pu200/
+  val_dir: external/ColliderML_data/ttbar_pu200/
+  test_dir: external/ColliderML_data/ttbar_pu200/
 
   event_type: ttbar
   dataset_prefix: ttbar_pu200
   calo_only: true
 
-  # 1, and PU0 DIFFERS (4) -- this is a data-forced difference, not an oversight. MaskFormer's
-  # memory is driven by queries x cells: pu0 is 400 x ~22,000 = 8.8M per event, pu200 is
-  # 1600 x ~117,000 = 187M, twenty-one times larger. A pu200 batch of 1 was already measured at
-  # 68 GB peak of 81.9 on this card. Batch 4 does not fit on any card in either cluster.
+  # batch_size 1 is a different code path in data.py: the dataloader is handed batch_size=None
+  # with no collate_fn, since items already carry a leading batch dim. Anything larger pads the
+  # variable-length hit dimension to the largest event in the batch, inside the workers.
   batch_size: 1
   input_sort_field: phi
-  # 24 workers at a row_group_cache_size of 3, and THE TWO MUST MOVE TOGETHER. A decoded pu200
-  # shard is 4.0 GB, so 24 workers at data.py's default of 8 slots would need ~690 GB of host RAM;
-  # at 3 they measured 518 GB resident. Budget from the ~49 processes a run actually spawns
-  # (train plus validation and prefetch), not from the 24 requested.
   num_workers: 24
+  # PU0 DIFFERS: absent there. A pileup-200 row group is large enough that re-reading it per
+  # event dominates the loader.
   row_group_cache_size: 3
 
-  # Only 10,000 events are downloaded, and the CLUE store windows sit at [7000,7050) and
-  # [7500,8000). Training past 6750 would run into them and make the head-to-head a test on
-  # training data; src/maskformer/ce_ai_1/train.sh refuses to start if it would.
+  # PU0 DIFFERS: 20000 there. All that fits before the window runs into the CLUE store windows,
+  # so this run is step-limited by the event budget rather than by choice.
   num_train: 6000
   num_val: 250
   num_test: 500
@@ -62,121 +50,44 @@ data:
   val_start_event: 6000
   test_start_event: 6250
 
-  # Zero-suppression. 1e-3 removed ~84% of hits and shredded clusters (median hits/particle
-  # 15 -> 4); 2e-4 keeps them intact at ~22k hits/event.
   calohit_min_energy: 2.0e-4
 
   particle_min_pt: 0.5
-  # PU0 DIFFERS: 4.0 there, the full detector.
-  #
-  # BARREL ONLY, and the one physics change from pu0. The HCAL barrel reaches r=3441 at |z|<=3450,
-  # so a track steeper than eta=0.883 leaves through the barrel end and puts the rest of its
-  # shower in the endcap; cutting here keeps every target fully contained. Applied to CELLS as
-  # well as particles -- cutting cells alone would leave targets whose cells had been removed.
+  # Cut with the cells above, not independently. PU0 DIFFERS: 4.0 there.
   particle_max_abs_eta: 0.88
+  # The barrel cut. PU0 DIFFERS: absent there, the full detector being used.
   calohit_max_abs_eta: 0.88
   particle_hit_cuts: {}
   particle_include_charged: true
   particle_include_neutral: true
 
-  # 10, was 3. Particles depositing only a handful of cells are not reconstructable but still sat
-  # in the efficiency denominator. Measured at 60 events under shower-level truth, raising the
-  # floor from 3 to 10 drops 7% of targets (183.3 -> 170.3 per event) and costs almost nothing in
-  # coverage: the fraction of cells owned by some target goes 0.819 -> 0.816, because the targets
-  # it removes are by construction the ones holding the fewest cells. Median cells per target
-  # rises 58 -> 64.
-  #
-  # THIS IS PART OF THE TRUTH DEFINITION, not a display cut. It is in event_store.py's
-  # CONTRACT_KEYS and must match `particle_selection.particle_min_num_calohits` in
-  # config/experiment.yaml, or the store will refuse to open.
   particle_min_num_calohits: 10
 
-  # THE TRUTH DEFINITION. Merges Geant secondaries produced inside the calorimeter back onto the
-  # particle that entered it, so one shower is one target. Measured over 800 barrel events, the
-  # per-particle alternative left only 38.5% of barrel energy owned by any target, against 67.5%
-  # here; 42.2% of collapsed targets span an ECAL/HCAL boundary, which is why CLUE needs its
-  # cross-subsystem linking stage to be scored fairly against this. The front face below is
-  # measured from the calo-hit cloud: ECAL barrel spans r 1252-1519 mm, endcap starts at |z| 3202.
   particle_collapse_shower_secondaries: true
   calo_entry_radius: 1252.0
   calo_entry_abs_z: 3202.0
 
-  # 1600. SIZED FROM A MEASUREMENT over 800 barrel events: targets/event mean 1129, p99 1481,
-  # p99.9 1579, max 1712. A cap of 1400 truncates 3.75% of events, 1500 truncates 0.75%, 1600
-  # truncates 0.125% (a single event) and nothing is gained until 1800.
-  #
-  # Note the collapse cuts targets by only 1.33x here against 2.9x at pu0: most of what fills a
-  # pu200 barrel event is not shower fragmentation but 200 pileup vertices each sending their own
-  # particles in, and those entered separately so nothing merges them. The energy coverage is
-  # still why it is worth doing -- 0.385 -> 0.675.
-  #
-  # MUST EQUAL model...decoder.num_queries below.
-  # PU0 DIFFERS: 400 there.
+  # Query budget, aliased into the decoder below. PU0 DIFFERS: 400 there.
   event_max_num_particles: &num_objects 1600
 
   return_calohits: true
   return_tracks: false
 
 trainer:
-  # 4 epochs x 6,000 events at batch 1 = 24,000 optimiser steps, ~30 h.
-  #
-  # SIZED FROM A PU200 MEASUREMENT, 2026-08-13. The block that used to sit here was pu0's,
-  # inherited when this file was split off it, and quoted 20,000 steps per epoch -- meaningless
-  # here, where an epoch is 6,000 events. A 150-step probe of this exact configuration on ce-ai-1
-  # settled at 0.22 it/s, i.e. 4.5 s per step and 7.6 h per epoch. The rate FELL from 0.43 to 0.22
-  # over those 150 steps as the row-group cache moved off its first shard, so 0.22 is the steady
-  # state and the opening number is not to be trusted.
-  #
-  # WHERE THE TIME GOES, measured at the same moment: 16 of 104 cores busy, 758 GB RAM free,
-  # 39.5 GB of 80 GB GPU memory used. Neither input-bound nor memory-bound -- GPU-bound on the mask
-  # cost and loss, a [queries x particles x cells] = 1600 x 1600 x 117,000 tensor built at EVERY
-  # decoder layer. That is ~3e11 multiply-adds per layer and four layers per step, which is ~4 s of
-  # A100 bf16 and accounts for essentially the whole 4.5 s.
-  #
-  # SO MORE WORKERS WILL NOT HELP. The DIAS measurement that made the old pu200 job input-bound was
-  # a different configuration and does not transfer; this one leaves 88 cores idle.
-  #
-  # THE LEVER IF THIS IS TOO SLOW is `has_intermediate_loss: false` on the mask task, which is true
-  # by default and is why that tensor is built four times rather than once. hepattn's own CLD
-  # experiment sets it False on every task, and at pu0 the equivalent saving was measured at 2.6x
-  # (0.79 -> 2.06 it/s cutting decoder layers 4 -> 1). NOT applied here: it changes the objective,
-  # and this run is meant to be pu0's configuration at a different pileup.
-  #
-  # 24,000 steps is well short of pu0's 60,000-120,000, and that is a constraint rather than a
-  # choice -- only 6,000 events can be trained on before the window runs into the CLUE stores, and
-  # each step costs 4.5 s. State it as a limitation when reporting.
-  #
-  # RESIZE THIS AND lrs_config TOGETHER. OneCycleLR is sized from total steps, so a run that
-  # overruns its walltime never reaches its decay phase and its final checkpoint is taken at a
-  # high learning rate.
+  # PU0 DIFFERS: 6 there. OneCycleLR is sized from total steps, so this must be set from a
+  # measured throughput; a wrong estimate leaves the final checkpoint at a high learning rate.
   max_epochs: 4
-  # 1, was 4. The accumulation existed to serve Lion, which uses only the SIGN of the gradient and
-  # is therefore too noisy at batch 1; AdamW below normalises by a running second moment instead and
-  # does not need the same smoothing. Taking a step per event gives 4x the optimiser steps for the
-  # same walltime, which is the point.
-  #
-  # THIS IS COUPLED TO lrs_config.max. That value was sqrt(4)-scaled to compensate for accumulating;
-  # with accumulation off, the scaling is no longer what justifies it -- see the note there. Do not
-  # change one of these without rereading the other.
   accumulate_grad_batches: 1
   accelerator: gpu
   devices: 1
   precision: bf16-mixed
   log_every_n_steps: 10
   default_root_dir: logs
-  # 1.0, was 0.1. THIS HAD TO MOVE WITH THE OPTIMISER and is the likeliest thing to have silently
-  # ruined the run if left alone. Lion's update is the sign of the gradient, so its raw gradient
-  # norms sat in a range where 0.1 was a sane ceiling. AdamW does not bound its update that way and
-  # its gradient norms here are expected to be O(1), so a 0.1 clip would rescale essentially EVERY
-  # step -- which silently replaces the OneCycle schedule with "constant tiny step", and shows up as
-  # a loss curve that flattens early for no visible reason rather than as an error.
-  #
-  # hepattn logs no gradient norm anywhere, so this cannot be confirmed from the run as configured.
-  # If the loss does flatten early, that is the first thing to instrument.
   gradient_clip_val: 1.0
   enable_progress_bar: true
   val_check_interval: 0.25
 
+  # Comet logging. Change `workspace` to your own, or set `online: false` to disable it.
   logger:
     class_path: hepattn.utils.loggers.MyCometLogger
     init_args:
@@ -206,33 +117,14 @@ trainer:
         refresh_rate: 10
 
 model:
-  # AdamW, was Lion. Lion's sign-only update is what forced accumulate_grad_batches: 4 above; AdamW
-  # is better behaved at batch 1, which is the whole reason the accumulation could be dropped.
   optimizer: adamw
 
   lrs_config:
     initial: 1e-5
-    # 1e-4. Reached here by two different routes that happen to agree: it was previously the
-    # sqrt(4) scaling of 5e-5 for accumulate_grad_batches: 4, and it is also the recommended AdamW
-    # starting point for this setup. The earlier finding that "1e-4 thrashed and 1.5e-4 diverged at
-    # batch 1" was measured under LION at batch 1 and does NOT transfer to AdamW.
-    # If 1e-4 turns out to underfit, 5e-4 is the next value to try.
     max: 1e-4
     end: 1e-6
-    # Unchanged at 0.01, but it now means something different and the new meaning is better.
-    # OneCycleLR is sized from TOTAL optimiser steps, and dropping accumulation multiplied those by
-    # 4. At the 7 epochs set above that is 20k events x 7 = 140,000 steps, against ~20,000 under the
-    # old accumulate-4 / 4-epoch arrangement -- so warmup is ~1,400 steps where it was ~200. Warmup
-    # should scale with the run, which is why this stays a FRACTION rather than becoming an absolute
-    # count: re-sizing max_epochs then re-sizes the warmup for free.
     pct_start: 0.01
     skip_scheduler: false
-    # Left at 1e-5 ON PURPOSE, despite AdamW's usual 1e-2. Lion convention is a weight decay several
-    # times LARGER than AdamW's for the same regularisation, so 1e-5 under Lion was already almost
-    # no decay, and the matching AdamW value is smaller still. Raising it to a conventional AdamW
-    # default here would be a real change in regularisation landing in the same run as the optimiser
-    # swap, the objective change and the head removal -- one confound too many. Change it on its own
-    # later if the model overfits, which at 4 epochs over 20k events it currently does not.
     weight_decay: 1e-5
 
   mtl: false
@@ -241,8 +133,6 @@ model:
     class_path: hepattn.models.MaskFormer
     init_args:
       dim: &dim 256
-      # The encoder sorts constituents by this before windowed attention, so it decides which hits
-      # share a window.
       input_sort_field: phi
 
       input_nets:
@@ -253,9 +143,6 @@ model:
               init_args:
                 input_name: calohit
                 input_dtype: float32
-                # log_energy, not total_energy: InputNet applies no normalisation, and raw
-                # total_energy is ~1000x smaller than the O(1) coordinates, so the single most
-                # important feature for calo clustering was numerically drowned out.
                 fields:
                   - x
                   - y
@@ -271,9 +158,6 @@ model:
                     hidden_layers: [128]
                     output_size: *dim
                     activation: SwiGLU
-                # FourierPositionEncoder, not PositionEncoder: the latter's default frequencies
-                # alias at the scale that matters here (a shower spans ~0.007 in eta), giving hits
-                # of the same particle decorrelated encodings. Measured 2.3x more locality signal.
                 posenc:
                   class_path: hepattn.models.posenc.FourierPositionEncoder
                   init_args:
@@ -329,39 +213,12 @@ model:
                 losses:
                   object_bce: 0.1
                 costs:
-                  # 0.1, WAS 0, AND THE 0 WAS A MISTAKE RATHER THAN A CHOICE. It entered in
-                  # 16be6f2 alongside a correct change to the MASK task's costs -- the instruction
-                  # was "turn the bce COST off", meaning mask_bce in the mask task, and it was
-                  # applied to this task's object_bce as well. They are different BCEs.
-                  #
-                  # WHAT THE 0 DID. `costs` is what the Hungarian matcher uses to pair queries with
-                  # truth particles; it is detached, so it changes the PAIRING and never the
-                  # gradient. At 0 this head contributed nothing to that pairing, so queries were
-                  # matched on mask overlap alone -- a query this head confidently called fake
-                  # could still be handed a real particle and was then trained to call itself real.
-                  # The head that decides HOW MANY objects exist was excluded from deciding WHICH.
-                  #
-                  # Measured on the 2026-08-11 run, that is exactly where the model failed: across
-                  # the whole mask-threshold range f1 moved 0.546-0.548 (the masks are near-bimodal
-                  # and essentially solved), while the object threshold alone moved it 0.512->0.548
-                  # and the cluster count 310->160 against 185 true targets.
-                  #
-                  # 0.1 matches the original ColliderML config and hepattn's own CLD experiment,
-                  # which uses object_bce as its DOMINANT matching cost.
                   object_bce: 0.1
                 dim: *dim
                 null_weight: 1.0
                 mask_queries: false
                 has_intermediate_loss: true
                 has_first_layer_loss: false
-                # A true particle only counts as reconstructed if its matched query is also accepted
-                # here, and the default is an argmax at 0.5. Affects prediction and metrics only,
-                # never the loss, so it is safe to leave wrong during training and fix afterwards.
-                #
-                # 0.5, re-scanned 2026-08-12 on the tuning window under shower-level truth. 0.2
-                # came from a sweep against the old objective and the old truth; on this target it
-                # over-accepted, giving 310 clusters per event against 185 true particles. Affects
-                # prediction and metrics only, never the loss.
                 eval_threshold: 0.5
 
             - class_path: hepattn.models.task.ObjectHitMaskTask
@@ -371,41 +228,10 @@ model:
                 input_object: query
                 output_object: flow
                 target_object: particle
-                # SIMPLIFIED BASELINE. Was dice 5.0 + focal 20.0 in both losses and costs. The
-                # point of this configuration is to find out what the plain objective does before
-                # any of the weighting is re-added: equal-weighted DICE and BCE, no focal term.
                 losses:
                   mask_dice: 1.0
                   mask_bce: 1.0
-                # DICE only, which is both what was asked for ("bce cost off") and what hepattn's
-                # CLD experiment does -- it comments its own mask_bce cost out and keeps mask_dice.
-                # Matching decides WHICH query owns a target, and one term deciding that is easier
-                # to reason about when the result moves.
-                #
-                # An earlier comment here claimed loss.py has no `mask_bce` in cost_fns and that
-                # BCE therefore could not be a cost. That is false (loss.py:392). This is a choice.
                 costs:
                   mask_dice: 1.0
                 null_weight: 1.0
                 dim: *dim
-
-            # THE INCIDENCE HEAD IS DELIBERATELY ABSENT HERE, and this is the ablation half of the
-            # simplified baseline above: one object-classification head and one mask head, nothing
-            # else. It predicted I_ia = E_ia/E_i, the fraction of each cell's energy belonging to
-            # each particle, supervised with kl_div at weight 100 against the target built in
-            # data.py from contrib_particle_ids/contrib_energies.
-            #
-            # It is worth knowing what removing it does and does not do:
-            #   - It does NOT change the clustering path. The head was never in the matching cost
-            #     (kl_div_cost is a [queries x particles x hits] tensor, ~86 GB here) and nothing
-            #     downstream consumed its output, so cluster membership came from the mask head
-            #     either way. What is lost is the auxiliary gradient it put on the shared trunk.
-            #   - It DOES remove the only representation of a shared cell in the model. ~12.6% of
-            #     cells have more than one contributing particle and the binary mask target cannot
-            #     express that. eval/dump.py then writes width-0 mf_incidence arrays and sets
-            #     maskformer.has_incidence false, so the store stays readable and the soft study
-            #     simply has no MaskFormer side; truth_incidence is unaffected.
-            #   - It frees the dense [n_particles x n_hits] float32 target, ~88 MB/event at pu0.
-            #
-            # To restore it, take the block from git:
-            #   git show ee21566:src/maskformer/hepattn_colliderml/configs/calo_clustering.yaml

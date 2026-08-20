@@ -1,27 +1,12 @@
 """Matching predicted clusters to truth particles.
 
-Nothing in this module knows which method produced a clustering. It takes a label per cell
-and the event's truth partition, and returns the correspondence the metrics are computed
-from. Both CLUE and the MaskFormer are scored through it, which is what guarantees the two
-are measured the same way.
+Nothing here knows which method produced a clustering: it takes a label per cell and the
+event's truth partition, and returns the correspondence the metrics are computed from. Both
+CLUE and the MaskFormer are scored through it.
 
-The matching is a **global one-to-one assignment**, solved with
-``scipy.optimize.linear_sum_assignment``. That choice is not incidental:
-
-*   The metric the model logs during training is not reusable. It compares query *i* with
-    target *i*, which is only meaningful because the training loss has already Hungarian-
-    permuted the two onto each other. CLUE has no such permutation, so that metric cannot be
-    applied to both and a separate, model-agnostic matcher is required.
-*   A greedy "assign each cluster to whichever particle contributed most of its energy"
-    is not the same thing and is not symmetric. It lets one particle win several clusters
-    while another wins none, and a particle merged into a neighbour simply vanishes from the
-    denominator instead of counting as a miss.
-
-The assignment is rectangular by construction -- there are ~620 truth particles per event
-against ~570-720 MaskFormer clusters and whatever CLUE produces -- so it yields
-``min(n_truth, n_pred)`` pairs. Truth particles left over are inefficiencies; predicted
-clusters left over are fakes. Both are returned, because reporting only the matched pairs
-would score each method on the subset of the event it happened to do well on.
+The assignment is global and one-to-one, solved with ``scipy.optimize.linear_sum_assignment``.
+It is rectangular, so it yields ``min(n_truth, n_pred)`` pairs; truth particles left over are
+inefficiencies and predicted clusters left over are fakes, and both are returned.
 """
 
 from dataclasses import dataclass
@@ -64,10 +49,9 @@ def overlap_matrix(
         n_pred: number of predicted clusters.
 
     Returns:
-        ``(n_truth, n_pred)`` float64 array. Cells owned by nobody, or claimed by nobody,
-        contribute to no pair -- but they still count towards the row and column totals the
-        caller divides by, which is how unclustered energy costs efficiency and how
-        sub-threshold deposits cost purity.
+        ``(n_truth, n_pred)`` float64. Cells owned or claimed by nobody contribute to no pair,
+        but still count towards the totals the caller divides by, which is how unclustered
+        energy costs efficiency and sub-threshold deposits cost purity.
     """
     if n_truth == 0 or n_pred == 0:
         return np.zeros((n_truth, n_pred), dtype=np.float64)
@@ -93,24 +77,21 @@ def hungarian_match(
 
     Args:
         overlap: ``(n_truth, n_pred)`` from :func:`overlap_matrix`.
-        min_overlap: pairs at or below this are discarded and their members reported as
-            unmatched. The default of 0 matters: a global optimum will otherwise pair a
-            truth particle with a completely disjoint cluster purely to fill out the
-            assignment, inventing a match that shares no cells at all.
+        min_overlap: pairs at or below this are reported unmatched. The default of 0 stops a
+            global optimum pairing a particle with a wholly disjoint cluster to fill out the
+            assignment.
         truth_total, pred_total: row and column totals, required only when
             `min_overlap_frac` is non-zero.
-        min_overlap_frac: a *relative* floor, which is the one with teeth. A pair survives
-            only if it shares at least this fraction of ``min(truth total, cluster total)``.
-
-            An absolute floor of 0 admits a match on a single 1 MeV cell, which makes the
-            match rate and its complement the fake rate nearly vacuous: an energetic cluster
-            in a busy event is almost certain to graze *some* particle. Taking the minimum of
-            the two totals keeps the test symmetric -- a small cluster sitting wholly inside a
-            large particle still matches, while a large cluster brushing a small particle does
-            not.
+        min_overlap_frac: relative floor. A pair survives only if it shares at least this
+            fraction of ``min(truth total, cluster total)``. Taking the minimum keeps the test
+            symmetric: a small cluster wholly inside a large particle still matches, a large
+            cluster brushing a small one does not.
 
     Returns:
         A :class:`MatchResult`.
+
+    Raises:
+        ValueError: if `min_overlap_frac` is non-zero and either total is missing.
     """
     n_truth, n_pred = overlap.shape
     if n_truth == 0 or n_pred == 0:
@@ -148,18 +129,11 @@ def hungarian_match(
 
 
 def fragmentation(overlap: np.ndarray, truth_total: np.ndarray, fraction: float = 0.10) -> np.ndarray:
-    """Per truth particle, how many clusters hold at least `fraction` of it.
+    """Per truth particle, how many clusters hold at least `fraction` of it; >1 means split.
 
-    More than one means the particle was **split**. Counted from the same overlap matrix
-    that drove the matching, so the split rate cannot drift away from the efficiency.
-
-    The weighting is the caller's choice and on splitting it is decisive. Pass ``overlap_n`` /
-    ``truth_total_n`` for the brief's hit-counted definition; pass the energy pair for the one
-    consistent with every other primary metric here. Measured, the two disagree on the *sign*
-    of MaskFormer's trend above ~8 GeV: hit-counted splitting falls with particle energy while
-    energy-weighted splitting rises. The blind spot below is why -- it bites hardest on the
-    most fragmented particles, which are the energetic ones. Both are computed in
-    :func:`~src.evaluation.metrics.score_event`.
+    Counted from the same overlap matrix that drove the matching, so the split rate cannot
+    drift from the efficiency. The weighting is the caller's: pass the hit-counted pair or the
+    energy pair. Both are computed in :func:`~src.evaluation.metrics.score_event`.
     """
     if overlap.size == 0:
         return np.zeros(overlap.shape[0], dtype=np.int32)
@@ -168,18 +142,11 @@ def fragmentation(overlap: np.ndarray, truth_total: np.ndarray, fraction: float 
 
 
 def contamination(overlap: np.ndarray, truth_total: np.ndarray, fraction: float = 0.10) -> np.ndarray:
-    """Per predicted cluster, how many truth particles put at least `fraction` of themselves in it.
+    """Per cluster, how many truth particles put at least `fraction` of themselves in it.
 
-    More than one means the cluster **merged** several particles. Note the threshold is a
-    fraction of each *truth particle's* total, not of the cluster's, following the brief:
-    a cluster that swallows a large particle whole and also picks up a tenth of a small
-    neighbour has merged them, regardless of how the cluster's own energy divides.
-
-    As with :func:`fragmentation` the weighting is the caller's, though here it turns out to
-    matter little: CLUE's merge rate is the same under both, and MaskFormer's is somewhat
-    *higher* under energy weighting rather than lower. The energy form is still the one to
-    report, for consistency with every other primary metric rather than because it rescues
-    the number.
+    More than one means the cluster merged several particles. The threshold is a fraction of
+    each truth particle's total, not of the cluster's, so a cluster swallowing a large particle
+    and a tenth of a small neighbour has merged them however its own energy divides.
     """
     if overlap.size == 0:
         return np.zeros(overlap.shape[1], dtype=np.int32)

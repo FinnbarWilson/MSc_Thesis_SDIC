@@ -1,32 +1,15 @@
 """The event-store format: the on-disk contract between the model and the analysis.
 
-This file is the single source of truth for the layout. The thesis repository holds a
-hand-written *mirror* of it (a reader), deliberately not an import: the whole point of the
-format is that scoring and plotting need numpy and nothing else -- no hepattn, no torch, no
-GPU, no access to the 991 GB dataset. Keeping this module torch-free means the writer and
-the reader can be audited side by side.
+This file defines the layout. The analysis repository mirrors it by hand rather than importing
+it, so that scoring and plotting need numpy and nothing else, and keeping this module torch-free
+means writer and reader can be audited side by side.
 
-What a store contains, per event: the calorimeter cells the model actually saw, the truth
-partition over those cells, the truth particle table, and the MaskFormer output. CLUE is
-then run over the *same* cells, in the other repository, which is what makes "both
-algorithms see identical input" a structural property rather than something to remember.
-
-The MaskFormer output is TWO heads, not one, and reading only the first was a measurement
-error rather than a simplification. Format version 2 adds the incidence head; see the block
-comment on `mf_incidence_query` for why the two are not interchangeable.
-
-Two design choices are worth explaining.
-
-**Per-event keys, not concatenated arrays.** Every array is stored as `e{sample_id}__{name}`.
-An `.npz` is a zip, so reading one event decompresses only that event's members; a
-concatenated layout would force the whole chunk through zlib to get at one event, and would
-need offset bookkeeping in two repositories at once.
-
-**Cells are stored in geometry order**, `lexsort((phi, layer, subsystem))`, not in the order
-the loader produced them. Sorting costs nothing and buys ~26% on disk, because neighbouring
-cells then have similar coordinates and identical subsystem/layer bytes; it also makes the
-cluster-label arrays -- which are spatially coherent by construction -- compress far better.
-Hit indices inside the CSR blocks refer to this order.
+Two layout choices. Arrays are keyed per event, ``e{sample_id}__{name}``, because an ``.npz`` is
+a zip: reading one event then decompresses only that event's members, where a concatenated layout
+would push the whole chunk through zlib and need offset bookkeeping in two repositories. Cells are
+stored in geometry order, ``lexsort((phi, layer, subsystem))``, which costs nothing and saves
+about 26% on disk, neighbouring cells sharing coordinates and subsystem/layer bytes. Hit indices
+inside the CSR blocks refer to that order.
 """
 
 import json
@@ -38,27 +21,11 @@ import numpy as np
 
 FORMAT_VERSION = 2
 
-# Number of (query, share) pairs kept per cell from the incidence head. See the block comment
-# on the incidence arrays in ARRAY_DTYPES for what they are; k decides how much of each cell's
-# division survives into the store.
-#
-# 16, MEASURED rather than reasoned from the truth multiplicity. The first guess was 4, on the
-# grounds that truth divides a cell 1.22 ways and the mask head 2.04, so four slots ought to
-# hold the whole division. That was wrong: the incidence head is a softmax over 1000 queries
-# and is far more diffuse than either. Cumulative share captured, over 3 events, restricted to
-# the cells the mask head claims (the only ones the soft study ever divides):
-#
-#     k =  1  ->  0.554        k = 12  ->  0.952
-#     k =  2  ->  0.733        k = 16  ->  0.964
-#     k =  4  ->  0.861        k = 32  ->  0.983
-#     k =  8  ->  0.928        k = 64  ->  0.993
-#
-# At k = 4 the measured claims-per-cell came back as exactly 4.000 -- pinned to k, i.e. the
-# number was reporting the truncation rather than the model. 16 keeps 96% and costs ~1.6 MB per
-# event; going to 32 buys two points for another 1.3 MB.
-#
-# k = 1 remains sufficient for the exclusive head-to-head, which only needs the argmax and is
-# unaffected by any of this.
+# (query, share) pairs kept per cell from the incidence head, chosen by measurement rather than
+# from the truth multiplicity: that head is a softmax over every query and is far more diffuse
+# than the mask head, so a small k truncates the division and any claims-per-cell measured from
+# it reports k rather than the model. 16 captures ~96% of each cell's share at ~1.6 MB an event.
+# The exclusive head-to-head needs only the argmax and is unaffected.
 INCIDENCE_TOP_K = 16
 
 # Order of the subsystem codes used by `cell_subsystem`; also the order of the calibration
@@ -68,7 +35,7 @@ SUBSYSTEM_CODE: Mapping[str, int] = {name: i for i, name in enumerate(SUBSYSTEM_
 
 # Mask logits are stored as uint8 rather than float16. The decisions taken downstream are
 # all thresholds on the probability, and a code that is linear in the *logit* is uniform in
-# the quantity the model emits -- unlike linear-in-p, which wastes resolution in the middle
+# the quantity the model emits, unlike linear-in-p, which wastes resolution in the middle
 # and loses it exactly where the sigmoid saturates. The step is 16/255 = 0.063 in logit,
 # i.e. under 1.6% relative on p near 0.5, far finer than any threshold that will be scanned.
 LOGIT_MIN = -8.0
@@ -133,26 +100,14 @@ ARRAY_DTYPES: Mapping[str, np.dtype] = {
     "mf_indptr": np.dtype(np.int32),
     "mf_indices": np.dtype(np.int32),
     "mf_logit_u8": np.dtype(np.uint8),
-    # MaskFormer incidence head, cell-major and dense in k: `[n_hits, INCIDENCE_TOP_K]`.
+    # MaskFormer incidence head, cell-major and dense in k: `[n_hits, INCIDENCE_TOP_K]`. A
+    # different quantity from the masks above: the mask head emits an independent sigmoid per
+    # (query, cell), so a mask probability is not an energy fraction, while the incidence head
+    # emits a softmax over queries per cell trained against I_ia = E_ia / E_i.
     #
-    # This is a DIFFERENT quantity from the masks above and the distinction is the reason it
-    # is stored at all. The mask head emits an independent sigmoid per (query, cell): nothing
-    # in its loss constrains one cell's claims to sum to anything, so a mask probability is
-    # not an energy fraction and normalising a set of them does not make one. The incidence
-    # head emits a softmax OVER QUERIES per cell and is trained by KL divergence against
-    # `particle_incidence`, i.e. against I_ia = E_ia / E_i, the share of each cell's energy
-    # belonging to each particle. It is the head that was taught what a cell's division adds
-    # up to, and until format version 2 it was computed on every forward pass and discarded.
-    #
-    # Stored as the top k shares per cell, descending, with the query axis indexed into the
-    # KEPT queries (the same rows `mf_indptr` walks, not the model's raw 0..999), so a reader
-    # can gate on `mf_valid_prob` without a second lookup table. Padding is -1 in the index
-    # and 0.0 in the value, which happens when an event keeps fewer than k queries.
-    #
-    # The values are the raw softmax over all queries restricted to the kept ones, NOT
-    # renormalised over k. Renormalising here would bake a value of k into the store and
-    # silently change what a share means; a reader that wants a per-cell partition should
-    # divide by the row sum itself.
+    # Top k shares per cell, descending, with the query axis indexed into the kept queries so a
+    # reader can gate on `mf_valid_prob` without a second lookup. Padding is -1 and 0.0. Values
+    # are the raw softmax, not renormalised over k, which would bake k into the store.
     "mf_incidence_query": np.dtype(np.int16),
     "mf_incidence_share": np.dtype(np.float16),
 }

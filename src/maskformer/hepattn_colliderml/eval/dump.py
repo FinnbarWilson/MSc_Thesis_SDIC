@@ -1,30 +1,17 @@
 """Dump cells, truth and MaskFormer predictions into a portable event store.
 
-This is the only GPU-dependent step of the CLUE comparison. It runs one forward pass per
-event and writes a compact, plain-numpy record; everything downstream -- running CLUE,
-matching, scoring, plotting -- happens in the thesis repository against that record, with
-no hepattn, no torch and no dataset access.
-
-Two things the obvious route gets wrong and this one avoids:
-
-*   `main.py test` with `PredictionWriter` writes `flow_calohit_valid_prob` as a dense
-    float32 `[1, 1000, n_hits]` tensor: ~88 MB per event, ~44 GB for 500 events, onto a
-    filesystem that is 97% full. Here the masks go out as a sparse CSR of uint8 logit codes
-    above a loose threshold -- roughly three orders of magnitude smaller, and it still
-    supports re-deriving *any* working point offline.
-*   Scoring against the metric in `model.py` would need `MaskFormer.loss()`, whose Hungarian
-    permutation has no analogue for CLUE. Nothing here matches anything; the store holds raw
-    predictions and the shared, model-agnostic matcher runs later on both algorithms.
-
-Both prediction heads are written, which format version 1 did not do. The mask head answers
-"is this cell claimed at all", the incidence head answers "whose is it, and in what
-proportion". Only the first was ever exported, so every reported number resolved contested
-cells with a quantity that was never trained to divide one -- see `eval/format.py`.
-
-Usage (inside the container, from the experiment directory):
-
     python -m hepattn.experiments.colliderml.eval.dump <ckpt> \
-        --start-event 20250 --num-events 500 --out ~/eventstore
+        --start-event 20250 --num-events 500 --out ~/eventstores
+
+The only GPU-dependent step of the comparison. One forward pass per event, written as a compact
+plain-numpy record; everything downstream runs against that record with no hepattn, no torch and
+no dataset access.
+
+Masks go out as a sparse CSR of uint8 logit codes above a loose threshold, roughly three orders
+of magnitude smaller than the dense float32 tensor `PredictionWriter` would produce, and still
+enough to re-derive any working point offline. Nothing here matches anything: the store holds
+raw predictions, and the shared model-agnostic matcher runs later on both algorithms, the
+Hungarian permutation in `model.py` having no analogue for CLUE.
 """
 
 import argparse
@@ -36,13 +23,12 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader
-
 from hepattn.experiments.colliderml.data import ColliderMLDataset
 from hepattn.experiments.colliderml.eval import format as fmt
 from hepattn.experiments.colliderml.eval import geometry as geo
 from hepattn.experiments.colliderml.model import ColliderMLModel
 from hepattn.models.task import IncidenceRegressionTask
+from torch.utils.data import DataLoader
 
 PARTICLE_CLASS_FLAGS = (
     ("particle_is_photon", "photon"),
@@ -130,11 +116,8 @@ def _csr_from_dense(rows: np.ndarray, cols: np.ndarray, values: np.ndarray, n_ro
 def top_k_incidence(incidence: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
     """Reduce a dense `[n_kept_queries, n_hits]` incidence block to the top k shares per cell.
 
-    The incidence head softmaxes over queries, so every entry is nonzero and the dense block
-    is as large as the probability tensor the store exists to avoid (~88 MB/event). Almost
-    all of that is numerically irrelevant: truth divides a cell 1.22 ways, so beyond the
-    first few queries the shares are rounding noise. Keeping the top k is what makes the head
-    storable at all.
+    The head softmaxes over queries, so every entry is nonzero and the dense block is as large
+    as the probability tensor the store exists to avoid. Almost all of it is rounding noise.
 
     Args:
         incidence: `[n_kept_queries, n_hits]` shares, already restricted to kept queries.
@@ -183,17 +166,15 @@ def extract_event(
         valid_prob: `[num_queries]` object-head probabilities, on CPU, float32.
         layer_centres: frozen layer geometry per subsystem.
         calibration: sampling calibration indexed by subsystem code.
-        mf_incidence: `[num_queries, n_hits]` PREDICTED incidence-head shares, on CPU,
-            float32, or None for a checkpoint trained without an `IncidenceRegressionTask`.
-            Named with the `mf_` prefix to keep it distinct from the truth `particle_incidence`
-            unpacked below -- they are the same quantity from opposite sides, and the two must
-            not be confused. Stored as the top `incidence_top_k` per cell; None writes width-0
-            arrays and sets `maskformer.has_incidence` false in the metadata.
+        mf_incidence: `[num_queries, n_hits]` predicted incidence-head shares, or None for a
+            checkpoint without an `IncidenceRegressionTask`, which writes width-0 arrays. The
+            `mf_` prefix keeps it distinct from the truth `particle_incidence` below: the same
+            quantity from opposite sides.
         incidence_top_k: how many (query, share) pairs to keep per cell.
         store_mask_threshold: mask probability below which entries are not stored; this sets
             the floor of any working point a later scan can reach.
-        max_hits_per_query: cap on stored hits per query, 0 for uncapped. A safety valve
-            against one uncommitted query with a flat logit distribution dominating the file.
+        max_hits_per_query: cap on stored hits per query, 0 for uncapped, so one uncommitted
+            query with a flat logit distribution cannot dominate the file.
     """
     x = inputs["calohit_x"][0].numpy()
     y = inputs["calohit_y"][0].numpy()
@@ -212,12 +193,9 @@ def extract_event(
             layer[selected] = geo.assign_layers(name, x[selected], y[selected], z[selected], centres)
             assigned |= selected
 
-    # Every cell must belong to a CALIBRATED subsystem. `layer` starts at zeros and is only
-    # written for subsystems present in `layer_centres`, so a cell in an uncalibrated one would
-    # silently be recorded as layer 0 -- a wrong value that no downstream check would catch.
-    # This is reachable now that calibration accepts a subset of subsystems: the calibration scan
-    # reads only the first `--layer-calib-events`, so a subsystem that is empty there but
-    # populated later in the window would land here.
+    # `layer` starts at zeros and is written only for calibrated subsystems, so a cell in an
+    # uncalibrated one would silently be recorded as layer 0 and no downstream check would catch
+    # it. Reachable because the calibration scan reads only the first --layer-calib-events.
     if not assigned.all():
         missing = sorted({fmt.SUBSYSTEM_ORDER[c] for c in np.unique(subsystem[~assigned])})
         msg = (
@@ -265,11 +243,9 @@ def extract_event(
     mf_rows, mf_cols = np.nonzero(kept_logits >= floor)
     mf_values = kept_logits[mf_rows, mf_cols]
 
-    # Safety valve. A query that never commits leaves a broad, flat logit distribution and
-    # can contribute tens of thousands of near-threshold hits that no working point will
-    # ever select. Capping keeps one pathological query from dominating the file; the count
-    # of truncated queries is reported so a cap that actually bites is visible rather than
-    # silent.
+    # A query that never commits leaves a broad, flat logit distribution and can contribute tens
+    # of thousands of near-threshold hits no working point will select. The number of truncated
+    # queries is reported, so a cap that actually bites is visible.
     if max_hits_per_query > 0:
         keep = np.ones(mf_rows.size, dtype=bool)
         for row in np.flatnonzero(np.bincount(mf_rows, minlength=kept_queries.size) > max_hits_per_query):
@@ -415,12 +391,9 @@ def main() -> None:
             "particle_max_abs_eta": dataset.particle_max_abs_eta,
             "particle_min_num_calohits": dataset.particle_min_num_calohits,
             "event_max_num_particles": trained.get("event_max_num_particles"),
-            # Which particles ARE the targets, as opposed to which of them survive the cuts above.
-            # Without this the store cannot tell a per-Geant-particle truth from a shower-level
-            # one -- the three cuts are identical either way, while the target set differs by 3x
-            # and the energy it accounts for by 2.7x. Two stores dumped under different
-            # definitions would then compare as equal, which is the exact failure
-            # config/experiment.yaml exists to prevent.
+            # Which particles are the targets, as opposed to which survive the cuts above. The
+            # three cuts are identical under both truth definitions while the target set differs
+            # threefold, so without this key two incompatible stores would compare as equal.
             "particle_collapse_shower_secondaries": dataset.particle_collapse_shower_secondaries,
             "calo_entry_radius": dataset.calo_entry_radius,
             "calo_entry_abs_z": dataset.calo_entry_abs_z,
@@ -449,7 +422,7 @@ def main() -> None:
             "has_incidence": incidence_task is not None,
             "incidence_top_k": args.incidence_top_k if incidence_task is not None else 0,
             "incidence_normalisation": (
-                "softmax over queries per cell, restricted to the kept queries and NOT "
+                "softmax over queries per cell, restricted to the kept queries and not "
                 "renormalised over the stored k. Trained by KL divergence against "
                 "particle_incidence, so a share is a predicted fraction of the cell's energy "
                 "-- unlike a mask probability, which is an independent per-(query, cell) "

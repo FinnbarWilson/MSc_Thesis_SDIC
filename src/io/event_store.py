@@ -1,31 +1,13 @@
-"""Reading the event store: the cells, truth and model predictions both methods are scored on.
+"""Reader for the event store: the cells, truth and model predictions both methods score on.
 
-This is a hand-written mirror of the writer in
-``hepattn/experiments/colliderml/eval/format.py``, deliberately not an import of it. The
-comparison is only worth anything if the scoring code can be read, checked and re-run by
-someone who has neither hepattn nor a GPU nor the multi-terabyte dataset, so the dependency
-stops here: numpy and the standard library, nothing else.
+A hand-written mirror of the writer in ``hepattn/experiments/colliderml/eval/format.py``,
+deliberately not an import of it, so the scoring half of this repository depends on numpy and
+the standard library alone. The two sides are kept honest by a format version check rather than
+by a shared import.
 
-The store is also where "both algorithms saw the same cells" stops being a promise and
-becomes a fact. The cells in these files are the ones the network was given, after its own
-zero-suppression; CLUE clusters those same arrays rather than re-deriving a hit set from the
-raw files, so the two cannot drift apart.
-
-Nothing physical is hardcoded here. The sampling calibrations, the detector-id groups, the
-layer geometry and the selection cuts all travel inside the store as metadata, and
-:class:`EventStore` checks them against what the experiment config expects rather than
-restating them.
-
-A note on the MaskFormer output. Cell membership comes from the **mask** head, which scores
-each (query, cell) pair independently through a sigmoid: a detection score, with nothing in its
-loss relating one cell's claims to each other. :meth:`EventRecord.maskformer_labels` resolves
-each contested cell to a single winner, which is what CLUE can also express and so what the
-head-to-head runs on; :meth:`EventRecord.maskformer_soft_masks` keeps the fractional claims for
-the multi-owner study.
-
-The stores also carry width-0 ``mf_incidence_*`` arrays. Neither model in this thesis has an
-incidence head -- see the comment in `hepattn_colliderml/configs/pu0.yaml` -- so the fields
-exist only because this reader mirrors the on-disk format, and nothing reads them.
+Nothing physical is hardcoded: the calibrations, detector groups, layer geometry and selection
+cuts travel inside the store as metadata, and :class:`EventStore` checks them against the
+config's expectations.
 """
 
 import json
@@ -35,18 +17,18 @@ from pathlib import Path
 
 import numpy as np
 
-# Version 2 added the `mf_incidence_*` arrays. Version 1 stores are still readable: everything
-# in them still means the same thing, and nothing here reads the incidence arrays anyway.
+# Version 2 added the `mf_incidence_*` arrays, which nothing here reads, so version 1 stores
+# remain readable.
 SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2})
 
-# Mirrors format.py. Only used to decode; the authoritative values travel in the metadata
-# and are cross-checked in _check_encoding.
+# Mirrors format.py; the authoritative values travel in the metadata and are checked in
+# _check_encoding.
 LOGIT_MIN = -8.0
 LOGIT_MAX = 8.0
 LOGIT_LEVELS = 256
 
-# Metadata the thesis config has an opinion about. Any disagreement is an error, because it
-# means the store was produced under different definitions from the ones being reported.
+# Metadata the config has an opinion about. Any disagreement means the store was produced
+# under different definitions from the ones being reported, and is an error.
 CONTRACT_KEYS: tuple[tuple[str, ...], ...] = (
     ("units", "length"),
     ("units", "energy"),
@@ -54,10 +36,8 @@ CONTRACT_KEYS: tuple[tuple[str, ...], ...] = (
     ("particle_selection", "particle_min_pt"),
     ("particle_selection", "particle_max_abs_eta"),
     ("particle_selection", "particle_min_num_calohits"),
-    # The truth DEFINITION, not a cut on it: whether Geant secondaries made inside the
-    # calorimeter were merged onto the particle that entered it. The three cuts above are
-    # identical under both definitions while the target set differs threefold, so without this
-    # key a store dumped under one would validate against a config describing the other.
+    # The truth definition, not a cut on it. The three cuts above are identical under both
+    # definitions while the target set differs threefold.
     ("particle_selection", "particle_collapse_shower_secondaries"),
     ("detector", "subsystem_order"),
     ("detector", "subsystem_calibration"),
@@ -79,9 +59,11 @@ class EventStoreMismatchError(EventStoreError):
 def logit_code_for_threshold(probability: float) -> int:
     """Smallest stored uint8 code whose probability is at least ``probability``.
 
-    Working points are applied as an integer comparison against the stored codes, so no
-    float round-trip is involved and the test is exact up to the half-step quantisation of
-    +/-0.031 in logit.
+    Working points are applied as an integer comparison against the stored codes, so no float
+    round-trip is involved.
+
+    Raises:
+        ValueError: if `probability` is not strictly inside (0, 1).
     """
     if not 0.0 < probability < 1.0:
         msg = f"threshold must be in (0, 1), got {probability}"
@@ -91,12 +73,10 @@ def logit_code_for_threshold(probability: float) -> int:
 
 
 def probability_for_logit_code(code: np.ndarray) -> np.ndarray:
-    """Decode stored uint8 codes back to mask probabilities.
+    """Decode stored uint8 codes to mask probabilities, exact to the +/-0.031 logit half-step.
 
-    The inverse of :func:`logit_code_for_threshold`, and exact only up to the +/-0.031 logit
-    half-step of the quantisation. That is fine for a weight -- it is a soft share of a cell's
-    energy, not a threshold test -- but it is why working points are still applied as integer
-    comparisons against the codes rather than against decoded floats.
+    Fine for a weight, which is why the soft scoring uses it; thresholds are still applied as
+    integer comparisons against the codes.
     """
     logit = LOGIT_MIN + np.asarray(code, dtype=np.float64) / (LOGIT_LEVELS - 1) * (LOGIT_MAX - LOGIT_MIN)
     return 1.0 / (1.0 + np.exp(-logit))
@@ -155,9 +135,8 @@ class EventRecord:
     mf_indices: np.ndarray
     mf_logit_u8: np.ndarray
 
-    # MaskFormer incidence head, cell-major `[n_hits, k]`, descending in share. Width 0 for a
-    # format-1 store or a checkpoint without the head. The query axis indexes the same kept
-    # queries as `mf_valid_prob`; -1 is padding.
+    # MaskFormer incidence head, cell-major `[n_hits, k]`. Width 0 for a format-1 store or a
+    # checkpoint without the head, which is the case for both models here.
     mf_incidence_query: np.ndarray
     mf_incidence_share: np.ndarray
 
@@ -175,9 +154,7 @@ class EventRecord:
     def energy_calib(self) -> np.ndarray:
         """Cell energy with its subsystem's sampling calibration applied.
 
-        Not optional and not a constant factor: ECAL and HCAL are calibrated differently
-        (37.5/38.7 against 45.0/46.9), so a cluster's effective calibration depends on how
-        its energy is split between them and does not cancel in a ratio.
+        ECAL and HCAL are calibrated differently, so the factor does not cancel in a ratio.
         """
         return self.energy * self.calibration[self.subsystem]
 
@@ -185,9 +162,8 @@ class EventRecord:
     def truth_deposit(self) -> np.ndarray:
         """Per cell, the energy its owning particle put there; 0 where no target owns it.
 
-        This is ``E_ia``, the quantity the energy-weighted efficiency is built from. It is
-        recovered by walking the multi-owner CSR and keeping the entries whose particle is
-        also the cell's exclusive owner.
+        ``E_ia``, recovered by keeping the multi-owner CSR entries whose particle is also the
+        cell's exclusive owner. Raw, not calibrated.
         """
         deposit = np.zeros(self.n_hits, dtype=np.float64)
         if self.n_particles == 0 or self.truth_indices.size == 0:
@@ -216,14 +192,9 @@ class EventRecord:
     ) -> tuple[np.ndarray, int]:
         """Exclusive cell -> cluster labels at an arbitrary working point.
 
-        The store keeps the masks sparsely, above a loose threshold, so any working point at
-        or above that floor can be re-derived here without touching a GPU. This is what lets
-        the comparison be shown as a curve over working points rather than a single point
-        that depends on one tuning choice.
-
-        Where several accepted queries claim the same cell, the highest mask logit wins:
-        MaskFormer's masks may overlap but CLUE's cannot, so the head-to-head is run on an
-        exclusive partition for both. Overlap is reported separately, as a capability.
+        The store keeps masks above a loose threshold, so any working point at or above that
+        floor is re-derived here with no GPU. Where several accepted queries claim a cell, the
+        highest mask logit wins, giving the partition CLUE can also express.
 
         Args:
             mask_threshold: minimum mask probability for a cell to join a cluster.
@@ -249,8 +220,8 @@ class EventRecord:
         cols = self.mf_indices[keep]
         codes = self.mf_logit_u8[keep]
 
-        # Resolve overlapping claims: sort by (cell, code) and let the last entry per cell
-        # win, which is the highest-logit claim.
+        # Resolve overlapping claims: sort by (cell, code) so the last entry per cell is the
+        # highest-logit one.
         order = np.lexsort((codes, cols))
         rows, cols = rows[order], cols[order]
         last = np.empty(cols.size, dtype=bool)
@@ -269,21 +240,6 @@ class EventRecord:
         label[cols] = compact.astype(np.int32)
         return label, int(used.size)
 
-    def _mask_claims(self, mask_threshold: float, object_threshold: float) -> np.ndarray:
-        """Dense `[n_queries, n_hits]` boolean of which accepted query claims which cell.
-
-        Only built for ``restrict_to_mask``, which is a diagnostic path; the normal ones stay
-        sparse. At ~600 kept queries by ~24k cells this is a 14 MB bool array per event.
-        """
-        n_q = int(self.mf_valid_prob.size)
-        dense = np.zeros((max(n_q, 1), self.n_hits), dtype=bool)
-        if n_q == 0 or self.mf_indices.size == 0:
-            return dense
-        code = logit_code_for_threshold(mask_threshold)
-        rows = np.repeat(np.arange(n_q), np.diff(self.mf_indptr))
-        keep = (self.mf_logit_u8 >= code) & (self.mf_valid_prob[rows] >= object_threshold)
-        dense[rows[keep], self.mf_indices[keep]] = True
-        return dense
 
     def maskformer_soft_masks(
         self,
@@ -293,19 +249,10 @@ class EventRecord:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         """Overlapping masks as fractional claims on each cell's energy.
 
-        :meth:`maskformer_labels` throws this away. It resolves every contested cell to a
-        single highest-logit winner, because CLUE cannot represent a shared cell and the
-        head-to-head has to be run on something both methods can express. That is right for
-        the head-to-head and wrong as the last word: dividing a shared cell is the capability
-        the architecture has and the baseline does not, and collapsing it means the comparison
-        never measures the thing the model was built to do.
-
-        Here a cell contested by several accepted queries is *divided* between them in
-        proportion to their mask probabilities, rather than awarded to one. The weights are
-        normalised per cell, so a method whose masks never overlap -- CLUE -- comes through
-        this function with every weight equal to 1 and is neither helped nor penalised by the
-        change. That is the property that makes the resulting metric a fair one to compare on
-        rather than a MaskFormer-only diagnostic.
+        A cell contested by several accepted queries is divided between them in proportion to
+        their mask probabilities, rather than awarded to one as :meth:`maskformer_labels` does.
+        Weights are normalised per cell, so a method whose masks never overlap passes through
+        with every weight equal to 1.
 
         Args:
             mask_threshold: minimum mask probability for a cell to enter a cluster's claim.
@@ -339,7 +286,7 @@ class EventRecord:
                 return empty
 
         # Normalise each cell's claims to sum to one, so the division is a partition of that
-        # cell's energy and total predicted energy stays equal to total clustered energy.
+        # cell's energy.
         per_cell = np.bincount(cols, weights=weight, minlength=self.n_hits)
         weight = weight / np.maximum(per_cell[cols], 1e-30)
 
@@ -358,8 +305,12 @@ class EventStore:
             expect: optional mapping of the experiment config's expectations, checked
                 against the store's metadata. Keys are the leaf names of ``CONTRACT_KEYS``.
             strict: when False, a contract disagreement is a warning rather than an error.
-                Only reasonable when deliberately re-reading an old store to reproduce an
-                old figure.
+
+        Raises:
+            EventStoreError: if the directory holds no chunk files.
+            EventStoreVersionError: if a chunk is in an unsupported format version.
+            EventStoreMismatchError: if the chunks disagree with each other, with this
+                reader's probability encoding, or (when `strict`) with `expect`.
         """
         self.root = Path(root)
         self.chunks = sorted(self.root.glob("chunk_*.npz"))
@@ -449,7 +400,7 @@ class EventStore:
             if start < int(trained[1]) and start + num > int(trained[0]):
                 problems.append(
                     f"  event_window [{start}, {start + num}) overlaps the checkpoint's training window "
-                    f"[{trained[0]}, {trained[1]}) -- the model has seen these events"
+                    f"[{trained[0]}, {trained[1]}); the model has seen these events"
                 )
 
         if problems:
@@ -461,9 +412,6 @@ class EventStore:
 
             warnings.warn(msg, stacklevel=2)
 
-    @property
-    def sample_ids(self) -> list[int]:
-        return [sample_id for _, sample_id in self._index]
 
     def __len__(self) -> int:
         return len(self._index)
